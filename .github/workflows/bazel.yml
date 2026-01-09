@@ -36,9 +36,10 @@ jobs:
             target: aarch64-unknown-linux-musl
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-musl
-          # TODO: Enable Windows once we fix the toolchain issues there.
-          #- os: windows-latest
-          #  target: x86_64-pc-windows-gnullvm
+
+          # Windows
+          - os: windows-latest
+            target: x86_64-pc-windows-gnullvm
     runs-on: ${{ matrix.os }}
 
     # Configure a human readable name for each job
@@ -96,6 +97,233 @@ jobs:
         run: |
           # Use a very short path to reduce argv/path length issues.
           "BAZEL_STARTUP_ARGS=--output_user_root=C:\" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Dump rustc args for proc-macro crates (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMP_DIR="${RUNNER_TEMP:-/tmp}"
+          EXEC_ROOT="$(bazel $BAZEL_STARTUP_ARGS --bazelrc=.github/workflows/ci.bazelrc info execution_root)"
+          export EXEC_ROOT
+          echo "EXEC_ROOT=$EXEC_ROOT"
+          echo "OUTPUT_PATH=$(bazel $BAZEL_STARTUP_ARGS --bazelrc=.github/workflows/ci.bazelrc info output_path)"
+          echo "BAZEL_BIN=$(bazel $BAZEL_STARTUP_ARGS --bazelrc=.github/workflows/ci.bazelrc info bazel-bin)"
+          # Build a few known-problem crates (ignore failures) so any copy actions run.
+          bazel $BAZEL_STARTUP_ARGS --bazelrc=.github/workflows/ci.bazelrc \
+            build \
+            --remote_download_outputs=all \
+            @@rules_rs++crate+crates__dtor-0.1.0//:dtor \
+            @@rules_rs++crate+crates__thiserror-1.0.69//:thiserror \
+            @@rules_rs++crate+crates__tokio-1.48.0//:tokio || true
+          bazel $BAZEL_STARTUP_ARGS --bazelrc=.github/workflows/ci.bazelrc aquery \
+            --host_platform=@toolchains_llvm_bootstrapped//platforms:windows_amd64 \
+            --platforms=@toolchains_llvm_bootstrapped//platforms:windows_amd64 \
+            --output=textproto \
+            'mnemonic("Rustc", @@rules_rs++crate+crates__dtor-0.1.0//:dtor)' > "$TMP_DIR/aquery_dtor.txt"
+          grep -E 'dtor_proc_macro|transitive_crates|--extern=' "$TMP_DIR/aquery_dtor.txt" || true
+          bazel $BAZEL_STARTUP_ARGS --bazelrc=.github/workflows/ci.bazelrc aquery \
+            --host_platform=@toolchains_llvm_bootstrapped//platforms:windows_amd64 \
+            --platforms=@toolchains_llvm_bootstrapped//platforms:windows_amd64 \
+            --output=textproto \
+            'mnemonic("Rustc", @@rules_rs++crate+crates__thiserror-1.0.69//:thiserror)' > "$TMP_DIR/aquery_thiserror.txt"
+          grep -E 'thiserror_impl|transitive_crates|--extern=' "$TMP_DIR/aquery_thiserror.txt" || true
+          bazel $BAZEL_STARTUP_ARGS --bazelrc=.github/workflows/ci.bazelrc aquery \
+            --host_platform=@toolchains_llvm_bootstrapped//platforms:windows_amd64 \
+            --platforms=@toolchains_llvm_bootstrapped//platforms:windows_amd64 \
+            --output=textproto \
+            'mnemonic("Rustc", @@rules_rs++crate+crates__tokio-1.48.0//:tokio)' > "$TMP_DIR/aquery_tokio.txt"
+          grep -E 'tokio_macros|transitive_crates|--extern=' "$TMP_DIR/aquery_tokio.txt" || true
+          python - <<'PY'
+          import os
+          import re
+          exec_root = os.environ.get("EXEC_ROOT", "")
+          def resolve(path):
+              if exec_root and not os.path.isabs(path):
+                  return os.path.join(exec_root, path)
+              return path
+          def check(path):
+              resolved = resolve(path)
+              exists = os.path.exists(resolved)
+              print(f"{path} -> {resolved} {'EXISTS' if exists else 'MISSING'}")
+              if os.path.isdir(resolved):
+                  entries = sorted(os.listdir(resolved))
+                  print(f"{resolved} entries: {entries[:10]}")
+          def scan(label, filename):
+              text = open(filename, "r", encoding="utf-8").read()
+              print(f"== {label} ==")
+              for match in re.findall(r'arguments: "--extern=[^=]+=([^"]+)"', text):
+                  check(match)
+              for match in re.findall(r'arguments: "-Ldependency=([^"]+)"', text):
+                  check(match)
+          tmp_dir = os.environ.get("RUNNER_TEMP", "/tmp")
+          scan("dtor", os.path.join(tmp_dir, "aquery_dtor.txt"))
+          scan("thiserror", os.path.join(tmp_dir, "aquery_thiserror.txt"))
+          scan("tokio", os.path.join(tmp_dir, "aquery_tokio.txt"))
+          PY
+          ls -la "$EXEC_ROOT/bazel-out/windows_amd64-fastbuild/bin/external/rules_rs++crate+crates__dtor-0.1.0" || true
+          ls -la "$EXEC_ROOT/bazel-out/windows_amd64-fastbuild/bin/external/rules_rs++crate+crates__dtor-0.1.0/dtor_transitive_crates" || true
+          ls -la "$EXEC_ROOT/bazel-out/windows_amd64-fastbuild/bin/external/rules_rs++crate+crates__thiserror-1.0.69" || true
+          ls -la "$EXEC_ROOT/bazel-out/windows_amd64-fastbuild/bin/external/rules_rs++crate+crates__thiserror-1.0.69/thiserror_transitive_crates" || true
+          ls -la "$EXEC_ROOT/bazel-out/windows_amd64-fastbuild/bin/external/rules_rs++crate+crates__tokio-1.48.0" || true
+          ls -la "$EXEC_ROOT/bazel-out/windows_amd64-fastbuild/bin/external/rules_rs++crate+crates__tokio-1.48.0/tokio_transitive_crates" || true
+          bazel $BAZEL_STARTUP_ARGS --bazelrc=.github/workflows/ci.bazelrc \
+            aquery \
+            --host_platform=@toolchains_llvm_bootstrapped//platforms:windows_amd64 \
+            --platforms=@toolchains_llvm_bootstrapped//platforms:windows_amd64 \
+            --output=textproto \
+            'mnemonic("CopyToDirectory", @@rules_rs++crate+crates__dtor-0.1.0//:dtor)' \
+            > "$TMP_DIR/aquery_copy_dtor.txt" || true
+          python - <<'PY'
+          import os
+          import re
+          path = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "aquery_copy_dtor.txt")
+          if not os.path.exists(path):
+              print("aquery_copy_dtor.txt missing")
+              raise SystemExit(0)
+          text = open(path, "r", encoding="utf-8").read().splitlines()
+          actions = []
+          artifacts = {}
+          current_action = None
+          for line in text:
+              if line.strip().startswith("action "):
+                  if current_action:
+                      actions.append(current_action)
+                  current_action = {"inputs": [], "outputs": [], "mnemonic": None}
+              if "mnemonic:" in line and current_action is not None:
+                  m = re.search(r'mnemonic: "([^"]+)"', line)
+                  if m:
+                      current_action["mnemonic"] = m.group(1)
+              if "input_dep_set_ids:" in line and current_action is not None:
+                  current_action["inputs"].append(int(line.split(":")[1].strip()))
+              if "output_ids:" in line and current_action is not None:
+                  current_action["outputs"].append(int(line.split(":")[1].strip()))
+              if line.strip().startswith("artifact {"):
+                  pass
+          if current_action:
+              actions.append(current_action)
+          for i, line in enumerate(text):
+              if line.strip().startswith("artifact {"):
+                  path_val = None
+                  id_val = None
+                  j = i + 1
+                  while j < len(text) and "}" not in text[j]:
+                      if "id:" in text[j]:
+                          id_val = int(text[j].split(":")[1].strip())
+                      if "path:" in text[j]:
+                          path_val = text[j].split("path:")[1].strip().strip('"')
+                      j += 1
+                  if id_val is not None and path_val is not None:
+                      artifacts[id_val] = path_val
+          for action in actions:
+              if action.get("mnemonic") != "CopyToDirectory":
+                  continue
+              print("== CopyToDirectory action ==")
+              print("inputs:")
+              for dep in action["inputs"]:
+                  print(f"  dep_set_id: {dep}")
+              print("outputs:")
+              for out_id in action["outputs"]:
+                  print(f"  output_id: {out_id} path={artifacts.get(out_id)}")
+          print("== artifacts (filtered) ==")
+          for id_val, path_val in artifacts.items():
+              if "dtor_transitive_crates" in path_val or "dtor_proc_macro" in path_val:
+                  print(f"{id_val}: {path_val}")
+          PY
+          bazel $BAZEL_STARTUP_ARGS --bazelrc=.github/workflows/ci.bazelrc \
+            aquery \
+            --host_platform=@toolchains_llvm_bootstrapped//platforms:windows_amd64 \
+            --platforms=@toolchains_llvm_bootstrapped//platforms:windows_amd64 \
+            --output=textproto \
+            'mnemonic("Rustc", @@rules_rs++crate+crates__tokio-1.48.0//:tokio)' \
+            > "$TMP_DIR/aquery_tokio_rustc.txt" || true
+          grep -E 'action|mnemonic|tools_dep_set_ids|tool|tokio_macros' "$TMP_DIR/aquery_tokio_rustc.txt" || true
+          python - <<'PY'
+          import os
+          import re
+          path = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "aquery_tokio_rustc.txt")
+          if not os.path.exists(path):
+              print("aquery_tokio_rustc.txt missing")
+              raise SystemExit(0)
+          text = open(path, "r", encoding="utf-8").read().splitlines()
+          artifacts = {}
+          dep_sets = {}
+          action = None
+          in_action = False
+          in_dep_set = False
+          current_dep_set = None
+          for line in text:
+              stripped = line.strip()
+              if stripped.startswith("actions {"):
+                  in_action = True
+                  action = {"mnemonic": None, "tool_dep_sets": []}
+              if in_action and "mnemonic:" in line:
+                  m = re.search(r'mnemonic: "([^"]+)"', line)
+                  if m:
+                      action["mnemonic"] = m.group(1)
+              if in_action and "tools_dep_set_ids:" in line:
+                  action["tool_dep_sets"].append(int(line.split(":")[1].strip()))
+              if in_action and stripped == "}":
+                  if action and action.get("mnemonic") == "Rustc":
+                      break
+                  in_action = False
+              if stripped.startswith("dep_set_of_files {"):
+                  in_dep_set = True
+                  current_dep_set = {"direct_artifact_ids": [], "transitive_dep_set_ids": [], "id": None}
+              if in_dep_set and "id:" in line and current_dep_set is not None:
+                  current_dep_set["id"] = int(line.split(":")[1].strip())
+              if in_dep_set and "direct_artifact_ids:" in line and current_dep_set is not None:
+                  current_dep_set["direct_artifact_ids"].append(int(line.split(":")[1].strip()))
+              if in_dep_set and "transitive_dep_set_ids:" in line and current_dep_set is not None:
+                  current_dep_set["transitive_dep_set_ids"].append(int(line.split(":")[1].strip()))
+              if in_dep_set and stripped == "}":
+                  if current_dep_set and current_dep_set["id"] is not None:
+                      dep_sets[current_dep_set["id"]] = current_dep_set
+                  in_dep_set = False
+                  current_dep_set = None
+          for i, line in enumerate(text):
+              if line.strip().startswith("artifact {"):
+                  path_val = None
+                  id_val = None
+                  j = i + 1
+                  while j < len(text) and "}" not in text[j]:
+                      if "id:" in text[j]:
+                          id_val = int(text[j].split(":")[1].strip())
+                      if "path:" in text[j]:
+                          path_val = text[j].split("path:")[1].strip().strip('"')
+                      j += 1
+                  if id_val is not None and path_val is not None:
+                      artifacts[id_val] = path_val
+          print("== tokio Rustc tools dep sets ==")
+          if not action:
+              print("Rustc action not found")
+              raise SystemExit(0)
+          print(action["tool_dep_sets"])
+          def expand_dep_set(dep_set_id, seen=None):
+              if seen is None:
+                  seen = set()
+              if dep_set_id in seen:
+                  return []
+              seen.add(dep_set_id)
+              dep = dep_sets.get(dep_set_id, {})
+              result = list(dep.get("direct_artifact_ids", []))
+              for trans_id in dep.get("transitive_dep_set_ids", []):
+                  result.extend(expand_dep_set(trans_id, seen))
+              return result
+          tool_artifact_ids = []
+          for dep_set_id in action["tool_dep_sets"]:
+              tool_artifact_ids.extend(expand_dep_set(dep_set_id))
+          print("== tokio tool artifacts (filtered) ==")
+          for art_id in tool_artifact_ids:
+              path_val = artifacts.get(art_id)
+              if not path_val:
+                  continue
+              if "tokio_macros" in path_val or "dtor_proc_macro" in path_val or "thiserror_impl" in path_val:
+                  print(f"{art_id}: {path_val}")
+          PY
+          ls -la "$EXEC_ROOT/bazel-out/windows_amd64-opt-exec/bin/external/rules_rs++crate+crates__tokio-macros-2.6.0" || true
+          ls -la "$EXEC_ROOT/bazel-out/windows_amd64-opt-exec/bin/external/rules_rs++crate+crates__dtor-proc-macro-0.0.6" || true
+          ls -la "$EXEC_ROOT/bazel-out/windows_amd64-opt-exec/bin/external/rules_rs++crate+crates__thiserror-impl-1.0.69" || true
 
       - name: bazel test //...
         env:
