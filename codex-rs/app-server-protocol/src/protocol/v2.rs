@@ -1535,10 +1535,22 @@ pub struct TurnInterruptResponse {}
 #[ts(tag = "type")]
 #[ts(export_to = "v2/")]
 pub enum UserInput {
-    Text { text: String },
-    Image { url: String },
-    LocalImage { path: PathBuf },
-    Skill { name: String, path: PathBuf },
+    Text {
+        text: String,
+    },
+    Image {
+        url: String,
+    },
+    LocalImage {
+        path: PathBuf,
+    },
+    Skill {
+        name: String,
+        path: PathBuf,
+        #[serde(default)]
+        // Experimental; subject to change.
+        validate_dependencies: bool,
+    },
 }
 
 impl UserInput {
@@ -1547,7 +1559,15 @@ impl UserInput {
             UserInput::Text { text } => CoreUserInput::Text { text },
             UserInput::Image { url } => CoreUserInput::Image { image_url: url },
             UserInput::LocalImage { path } => CoreUserInput::LocalImage { path },
-            UserInput::Skill { name, path } => CoreUserInput::Skill { name, path },
+            UserInput::Skill {
+                name,
+                path,
+                validate_dependencies,
+            } => CoreUserInput::Skill {
+                name,
+                path,
+                validate_dependencies,
+            },
         }
     }
 }
@@ -1558,7 +1578,15 @@ impl From<CoreUserInput> for UserInput {
             CoreUserInput::Text { text } => UserInput::Text { text },
             CoreUserInput::Image { image_url } => UserInput::Image { url: image_url },
             CoreUserInput::LocalImage { path } => UserInput::LocalImage { path },
-            CoreUserInput::Skill { name, path } => UserInput::Skill { name, path },
+            CoreUserInput::Skill {
+                name,
+                path,
+                validate_dependencies,
+            } => UserInput::Skill {
+                name,
+                path,
+                validate_dependencies,
+            },
             _ => unreachable!("unsupported user input variant"),
         }
     }
@@ -2147,6 +2175,7 @@ mod tests {
                 CoreUserInput::Skill {
                     name: "skill-creator".to_string(),
                     path: PathBuf::from("/repo/.codex/skills/skill-creator/SKILL.md"),
+                    validate_dependencies: false,
                 },
             ],
         });
@@ -2168,6 +2197,7 @@ mod tests {
                     UserInput::Skill {
                         name: "skill-creator".to_string(),
                         path: PathBuf::from("/repo/.codex/skills/skill-creator/SKILL.md"),
+                        validate_dependencies: false,
                     },
                 ],
             }

@@ -25,6 +25,7 @@ mod chat_composer;
 mod chat_composer_history;
 mod command_popup;
 pub mod custom_prompt_view;
+mod dependency_input_view;
 mod file_search_popup;
 mod footer;
 mod list_selection_view;
@@ -40,6 +41,7 @@ mod queued_user_messages;
 mod scroll_state;
 mod selection_popup_common;
 mod textarea;
+pub(crate) use dependency_input_view::DependencyInputView;
 pub(crate) use feedback_view::FeedbackNoteView;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -42,6 +42,8 @@ pub use crate::approvals::ApplyPatchApprovalRequestEvent;
 pub use crate::approvals::ElicitationAction;
 pub use crate::approvals::ExecApprovalRequestEvent;
 pub use crate::approvals::ExecPolicyAmendment;
+pub use crate::approvals::SkillDependency;
+pub use crate::approvals::SkillDependencyRequestEvent;
 
 /// Open/close tags for special user-input blocks. Used across crates to avoid
 /// duplicated hardcoded strings.
@@ -168,6 +170,14 @@ pub enum Op {
         request_id: RequestId,
         /// User's decision for the request.
         decision: ElicitationAction,
+    },
+
+    /// Resolve a skill dependency request (e.g., env vars).
+    ResolveSkillDependencies {
+        /// Request identifier from the skill dependency request.
+        id: String,
+        /// Provided dependency values keyed by dependency name.
+        values: HashMap<String, String>,
     },
 
     /// Append an entry to the persistent cross-session message history.
@@ -619,6 +629,8 @@ pub enum EventMsg {
     ElicitationRequest(ElicitationRequestEvent),
 
     ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent),
+
+    SkillDependencyRequest(SkillDependencyRequestEvent),
 
     /// Notification advising the user that something they are using has been
     /// deprecated and should be phased out.

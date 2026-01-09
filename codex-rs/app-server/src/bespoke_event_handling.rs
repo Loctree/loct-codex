@@ -189,6 +189,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 });
             }
         },
+        EventMsg::SkillDependencyRequest(_ev) => {}
         EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
             call_id,
             turn_id,
