@@ -354,7 +354,8 @@ impl App {
         let cfg = self.chat_widget.config_ref().clone();
         // Perform the fork via a thin wrapper for clarity/testability.
         let result = self
-            .perform_fork(ev.path.clone(), nth_user_message, cfg.clone())
+            .server
+            .fork_thread(nth_user_message, cfg.clone(), ev.path.clone())
             .await;
         match result {
             Ok(new_conv) => {
@@ -370,16 +371,6 @@ impl App {
                     )));
             }
         }
-    }
-
-    /// Thin wrapper around ThreadManager::fork_thread.
-    async fn perform_fork(
-        &self,
-        path: PathBuf,
-        nth_user_message: usize,
-        cfg: codex_core::config::Config,
-    ) -> codex_core::error::Result<codex_core::NewThread> {
-        self.server.fork_thread(nth_user_message, cfg, path).await
     }
 
     /// Install a forked thread into the ChatWidget and update UI to reflect selection.
