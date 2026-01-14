@@ -4403,7 +4403,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            InputResult::Submitted { text, .. } if text == prompt_text.to_string()
+            InputResult::Submitted { text, .. } if text == prompt_text
         ));
         assert!(composer.textarea.is_empty());
     }
@@ -4439,7 +4439,7 @@ mod tests {
         assert!(matches!(
             result,
             InputResult::Submitted { text, .. }
-                if text == "Review Alice changes on main".to_string()
+                if text == "Review Alice changes on main"
         ));
         assert!(composer.textarea.is_empty());
     }
@@ -4475,7 +4475,7 @@ mod tests {
         assert!(matches!(
             result,
             InputResult::Submitted { text, .. }
-                if text == "Pair Alice Smith with dev-main".to_string()
+                if text == "Pair Alice Smith with dev-main"
         ));
         assert!(composer.textarea.is_empty());
     }
@@ -4791,7 +4791,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            InputResult::Submitted { text, .. } if text == "Echo: hi".to_string()
+            InputResult::Submitted { text, .. } if text == "Echo: hi"
         ));
         assert!(composer.textarea.is_empty());
     }
@@ -4867,7 +4867,7 @@ mod tests {
         assert!(matches!(
             result,
             InputResult::Submitted { text, .. }
-                if text == "Cost: $$ and first: x".to_string()
+                if text == "Cost: $$ and first: x"
         ));
     }
 
