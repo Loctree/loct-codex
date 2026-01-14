@@ -391,7 +391,7 @@ impl App {
     ) {
         let thread = new_conv.thread;
         let session_configured = new_conv.session_configured;
-        let init = self.chatwidget_init_from_existing_thread(tui, cfg);
+        let init = self.chatwidget_init_for_forked_or_resumed_thread(tui, cfg);
         self.chat_widget =
             crate::chatwidget::ChatWidget::new_from_existing(init, thread, session_configured);
         // Trim transcript up to the selected user message and re-render it.

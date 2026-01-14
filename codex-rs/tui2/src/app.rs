@@ -418,7 +418,7 @@ pub(crate) struct App {
     skip_world_writable_scan_once: bool,
 }
 impl App {
-    pub fn chatwidget_init_from_existing_thread(
+    pub fn chatwidget_init_for_forked_or_resumed_thread(
         &self,
         tui: &mut tui::Tui,
         cfg: codex_core::config::Config,
@@ -1507,8 +1507,10 @@ impl App {
                         {
                             Ok(resumed) => {
                                 self.shutdown_current_conversation().await;
-                                let init = self
-                                    .chatwidget_init_from_existing_thread(tui, self.config.clone());
+                                let init = self.chatwidget_init_for_forked_or_resumed_thread(
+                                    tui,
+                                    self.config.clone(),
+                                );
                                 self.chat_widget = ChatWidget::new_from_existing(
                                     init,
                                     resumed.thread,
@@ -1564,8 +1566,10 @@ impl App {
                         {
                             Ok(forked) => {
                                 self.shutdown_current_conversation().await;
-                                let init = self
-                                    .chatwidget_init_from_existing_thread(tui, self.config.clone());
+                                let init = self.chatwidget_init_for_forked_or_resumed_thread(
+                                    tui,
+                                    self.config.clone(),
+                                );
                                 self.chat_widget = ChatWidget::new_from_existing(
                                     init,
                                     forked.thread,
