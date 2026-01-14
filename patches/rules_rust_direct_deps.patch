@@ -1,7 +1,40 @@
-Binary files a/rules_rust-0.68.1.tar.gz and b/rules_rust-0.68.1.tar.gz differ
-diff -ruN a/rust/private/clippy.bzl b/rust/private/clippy.bzl
---- a/rust/private/clippy.bzl	2025-12-09 17:08:33
-+++ b/rust/private/clippy.bzl	2026-01-12 22:18:12
+diff -ruN rules_rust_src/rust/platform/triple.bzl rules_rust_mod/rust/platform/triple.bzl
+--- rules_rust_src/rust/platform/triple.bzl	2025-12-09 17:08:33
++++ rules_rust_mod/rust/platform/triple.bzl	2026-01-13 20:19:36
+@@ -156,9 +156,10 @@
+     if "win" in repository_ctx.os.name:
+         _validate_cpu_architecture(arch, supported_architectures["windows"])
+         prefix = "{}-pc-windows".format(arch)
++        default_abi = "gnullvm"
+         return triple("{}-{}".format(
+             prefix,
+-            abi.get(prefix, "msvc"),
++            abi.get(prefix, default_abi),
+         ))
+ 
+     fail("Unhandled host os: {}", repository_ctx.os.name)
+diff -ruN rules_rust_src/rust/platform/triple_mappings.bzl rules_rust_mod/rust/platform/triple_mappings.bzl
+--- rules_rust_src/rust/platform/triple_mappings.bzl	2025-12-09 17:08:33
++++ rules_rust_mod/rust/platform/triple_mappings.bzl	2026-01-13 20:19:41
+@@ -29,6 +29,7 @@
+     "i686-pc-windows-msvc": _support(std = True, host_tools = True),
+     "i686-unknown-linux-gnu": _support(std = True, host_tools = True),
+     "x86_64-apple-darwin": _support(std = True, host_tools = True),
++    "x86_64-pc-windows-gnullvm": _support(std = True, host_tools = True),
+     "x86_64-pc-windows-msvc": _support(std = True, host_tools = True),
+     "x86_64-unknown-linux-gnu": _support(std = True, host_tools = True),
+     "x86_64-unknown-nixos-gnu": _support(std = True, host_tools = True),  # Same as `x86_64-unknown-linux-gnu` but with `@platforms//os:nixos`.
+@@ -45,6 +46,7 @@
+     "aarch64-apple-ios": _support(std = True, host_tools = False),
+     "aarch64-apple-ios-sim": _support(std = True, host_tools = False),
+     "aarch64-linux-android": _support(std = True, host_tools = False),
++    "aarch64-pc-windows-gnullvm": _support(std = True, host_tools = True),
+     "aarch64-pc-windows-msvc": _support(std = True, host_tools = True),
+     "aarch64-unknown-fuchsia": _support(std = True, host_tools = False),
+     "aarch64-unknown-uefi": _support(std = True, host_tools = False),
+diff -ruN rules_rust_src/rust/private/clippy.bzl rules_rust_mod/rust/private/clippy.bzl
+--- rules_rust_src/rust/private/clippy.bzl	2025-12-09 17:08:33
++++ rules_rust_mod/rust/private/clippy.bzl	2026-01-13 09:56:14
 @@ -140,7 +140,11 @@
                       ctx.rule.attr.lint_config[LintsInfo].clippy_lint_files + \
                       ctx.rule.attr.lint_config[LintsInfo].rustc_lint_files
@@ -15,15 +48,18 @@ diff -ruN a/rust/private/clippy.bzl b/rust/private/clippy.bzl
          ctx,
          ctx.rule.file,
          ctx.rule.files,
-@@ -153,6 +157,7 @@
+@@ -151,8 +155,10 @@
+         feature_configuration,
+         crate_info,
          dep_info,
++        crate_info.proc_macro_deps.to_list(),
          build_info,
          lint_files,
 +        transitive_crate_dir,
      )
  
      if clippy_diagnostics_file:
-@@ -229,7 +234,7 @@
+@@ -229,7 +235,7 @@
          outputs = outputs + [x for x in [clippy_diagnostics_file] if x],
          env = env,
          tools = [clippy_executable],
@@ -32,9 +68,24 @@ diff -ruN a/rust/private/clippy.bzl b/rust/private/clippy.bzl
          mnemonic = "Clippy",
          progress_message = "Clippy %{label}",
          toolchain = "@rules_rust//rust:toolchain_type",
-diff -ruN a/rust/private/rust.bzl b/rust/private/rust.bzl
---- a/rust/private/rust.bzl	2025-12-09 17:08:33
-+++ b/rust/private/rust.bzl	2026-01-11 23:18:57
+diff -ruN rules_rust_src/rust/private/common.bzl rules_rust_mod/rust/private/common.bzl
+--- rules_rust_src/rust/private/common.bzl	2025-12-09 17:08:33
++++ rules_rust_mod/rust/private/common.bzl	2026-01-13 20:43:07
+@@ -31,9 +31,9 @@
+ #
+ # Note: Code in `.github/workflows/crate_universe.yaml` looks for this line, if
+ # you remove it or change its format, you will also need to update that code.
+-DEFAULT_RUST_VERSION = "1.86.0"
++DEFAULT_RUST_VERSION = "1.92.0"
+ 
+-DEFAULT_NIGHTLY_ISO_DATE = "2025-04-03"
++DEFAULT_NIGHTLY_ISO_DATE = "2025-10-03"
+ 
+ def _create_crate_info(**kwargs):
+     """A constructor for a `CrateInfo` provider
+diff -ruN rules_rust_src/rust/private/rust.bzl rules_rust_mod/rust/private/rust.bzl
+--- rules_rust_src/rust/private/rust.bzl	2025-12-09 17:08:33
++++ rules_rust_mod/rust/private/rust.bzl	2026-01-13 09:56:14
 @@ -935,6 +935,7 @@
      },
      fragments = ["cpp"],
@@ -107,9 +158,9 @@ diff -ruN a/rust/private/rust.bzl b/rust/private/rust.bzl
          str(Label("//rust:toolchain_type")),
          config_common.toolchain_type("@bazel_tools//tools/cpp:toolchain_type", mandatory = False),
      ],
-diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
---- a/rust/private/rustc.bzl	2025-12-09 17:08:33
-+++ b/rust/private/rustc.bzl	2026-01-12 23:02:25
+diff -ruN rules_rust_src/rust/private/rustc.bzl rules_rust_mod/rust/private/rustc.bzl
+--- rules_rust_src/rust/private/rustc.bzl	2025-12-09 17:08:33
++++ rules_rust_mod/rust/private/rustc.bzl	2026-01-13 09:59:06
 @@ -14,6 +14,7 @@
  
  """Functionality for constructing actions that invoke the Rust compiler"""
@@ -118,31 +169,194 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
  load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
  load(
      "@bazel_tools//tools/build_defs/cc:action_names.bzl",
-@@ -697,6 +698,7 @@
+@@ -218,6 +219,144 @@
+ def _is_proc_macro(crate_info):
+     return "proc-macro" in (crate_info.type, crate_info.wrapped_crate_type)
+ 
++def _json_quote(value):
++    return "\"{}\"".format(value.replace("\\", "\\\\").replace("\"", "\\\""))
++
++def _json_bool(value):
++    return "true" if value else "false"
++
++def _json_list_strings(values):
++    return "[{}]".format(", ".join([_json_quote(value) for value in values]))
++
++def _json_dict_str_str(values):
++    items = []
++    for key in sorted(values.keys()):
++        items.append("{}: {}".format(_json_quote(key), _json_quote(values[key])))
++    return "{{{}}}".format(", ".join(items))
++
++def _to_repository_relative_path(file):
++    if file.short_path.startswith("../"):
++        return file.short_path[file.short_path.find("/", 3) + 1:]
++    return file.short_path
++
++def _copy_to_directory_bin_action_local(
++        ctx,
++        name,
++        dst,
++        copy_to_directory_bin,
++        files,
++        root_paths,
++        include_external_repositories,
++        include_srcs_packages,
++        include_srcs_patterns,
++        replace_prefixes,
++        hardlink,
++        preserve_mtime,
++        verbose):
++    file_infos_json = []
++    file_inputs = []
++    for f in files:
++        if not f.owner:
++            fail("Expected an owner target label for file {} but found none".format(f))
++
++        if f.owner.package == None:
++            fail("Expected owner target label for file {} to have a package name but found None".format(f))
++
++        if f.owner.workspace_name == None:
++            fail("Expected owner target label for file {} to have a workspace name but found None".format(f))
++
++        hardlink_file = False
++        if hardlink == "on":
++            hardlink_file = True
++        elif hardlink == "auto":
++            hardlink_file = not f.is_source
++
++        file_infos_json.append("{{{}}}".format(", ".join([
++            "\"package\": {}".format(_json_quote(f.owner.package)),
++            "\"path\": {}".format(_json_quote(f.path)),
++            "\"root_path\": {}".format(_json_quote(f.root.path)),
++            "\"short_path\": {}".format(_json_quote(f.short_path)),
++            "\"workspace\": {}".format(_json_quote(f.owner.workspace_name)),
++            "\"workspace_path\": {}".format(_json_quote(_to_repository_relative_path(f))),
++            "\"hardlink\": {}".format(_json_bool(hardlink_file)),
++        ])))
++        file_inputs.append(f)
++
++    config_json = "{{{}}}".format(", ".join([
++        "\"allow_overwrites\": false",
++        "\"dst\": {}".format(_json_quote(dst.path)),
++        "\"exclude_srcs_packages\": []",
++        "\"exclude_srcs_patterns\": []",
++        "\"files\": [{}]".format(", ".join(file_infos_json)),
++        "\"include_external_repositories\": {}".format(_json_list_strings(include_external_repositories)),
++        "\"include_srcs_packages\": {}".format(_json_list_strings(include_srcs_packages)),
++        "\"include_srcs_patterns\": {}".format(_json_list_strings(include_srcs_patterns)),
++        "\"replace_prefixes\": {}".format(_json_dict_str_str(replace_prefixes)),
++        "\"root_paths\": {}".format(_json_list_strings(root_paths)),
++        "\"preserve_mtime\": {}".format(_json_bool(preserve_mtime)),
++        "\"verbose\": {}".format(_json_bool(verbose)),
++    ]))
++
++    config_file = ctx.actions.declare_file("{}_config.json".format(name))
++    ctx.actions.write(
++        output = config_file,
++        content = config_json,
++    )
++
++    ctx.actions.run(
++        inputs = file_inputs + [config_file],
++        outputs = [dst],
++        executable = copy_to_directory_bin,
++        arguments = [config_file.path, ctx.label.workspace_name],
++        env = {"GODEBUG": "winsymlink=0"},
++        mnemonic = "CopyToDirectory",
++        progress_message = "Copying files to directory %{output}",
++        execution_requirements = {
++            "no-sandbox": "1",
++            "no-remote": "1",
++        },
++        toolchain = "@@bazel_lib+//lib:copy_to_directory_toolchain_type",
++    )
++
++def _copy_transitive_crates(ctx, toolchain, transitive_crate_dir, transitive_crate_files):
++    copy_to_directory_bin = ctx.toolchains["@@bazel_lib+//lib:copy_to_directory_toolchain_type"].copy_to_directory_info.bin
++    root_paths = []
++    include_external_repositories = ["**"]
++    include_srcs_packages = ["**"]
++    include_srcs_patterns = ["**"]
++    replace_prefixes = {"**/": ""}
++    hardlink = "auto"
++
++    if toolchain.target_os == "windows":
++        _copy_to_directory_bin_action_local(
++            ctx = ctx,
++            name = transitive_crate_dir.basename,
++            dst = transitive_crate_dir,
++            copy_to_directory_bin = copy_to_directory_bin,
++            files = transitive_crate_files,
++            root_paths = root_paths,
++            include_external_repositories = include_external_repositories,
++            include_srcs_packages = include_srcs_packages,
++            include_srcs_patterns = include_srcs_patterns,
++            replace_prefixes = replace_prefixes,
++            hardlink = hardlink,
++            preserve_mtime = False,
++            verbose = False,
++        )
++        return
++
++    copy_to_directory_bin_action(
++        ctx,
++        name = transitive_crate_dir.basename,
++        dst = transitive_crate_dir,
++        copy_to_directory_bin = copy_to_directory_bin,
++        files = transitive_crate_files,
++        root_paths = root_paths,
++        replace_prefixes = replace_prefixes,
++        hardlink = hardlink,
++        include_external_repositories = include_external_repositories,
++    )
++
+ def collect_deps(
+         deps,
+         proc_macro_deps,
+@@ -695,8 +834,10 @@
+         feature_configuration,
+         crate_info,
          dep_info,
++        proc_macro_deps,
          build_info,
          lint_files,
 +        transitive_crate_dir,
          stamp = False,
          force_depend_on_objects = False,
          experimental_use_cc_common_link = False,
-@@ -773,6 +775,15 @@
+@@ -714,8 +855,10 @@
+         feature_configuration (FeatureConfiguration): Feature configuration to be queried.
+         crate_info (CrateInfo): The Crate information of the crate to process build scripts for.
+         dep_info (DepInfo): The target Crate's dependency information.
++        proc_macro_deps (list[DepVariantInfo]): Proc-macro dependencies for the crate.
+         build_info (BuildInfo): The target Crate's build settings.
+         lint_files (list): List of files with rustc args for the Crate's lint settings.
++        transitive_crate_dir (File): Directory containing consolidated crate outputs.
+         stamp (bool, optional): Whether or not workspace status stamping is enabled. For more details see
+             https://docs.bazel.build/versions/main/user-manual.html#flag--stamp
+         force_depend_on_objects (bool, optional): Forces dependencies of this rule to be objects rather than
+@@ -773,6 +916,19 @@
      if _depend_on_metadata(crate_info, force_depend_on_objects):
          transitive_crate_outputs = dep_info.transitive_metadata_outputs
  
 +    proc_macro_outputs = []
++    for dep in proc_macro_deps:
++        dep_crate_info = dep.crate_info
++        if dep_crate_info and _is_proc_macro(dep_crate_info):
++            proc_macro_outputs.append(dep_crate_info.output)
 +    for dep in dep_info.direct_crates.to_list():
 +        if hasattr(dep, "dep"):
 +            dep_crate_info = dep.dep
 +        else:
 +            dep_crate_info = dep
-+        if _is_proc_macro(dep_crate_info):
++        if _is_proc_macro(dep_crate_info) and dep_crate_info.output not in proc_macro_outputs:
 +            proc_macro_outputs.append(dep_crate_info.output)
 +
      nolinkstamp_compile_direct_inputs = []
      if build_info:
          if build_info.rustc_env:
-@@ -800,6 +811,8 @@
+@@ -800,6 +956,8 @@
      else:
          runtime_libs = cc_toolchain.static_runtime_lib(feature_configuration = feature_configuration)
  
@@ -151,7 +365,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
      nolinkstamp_compile_inputs = depset(
          nolinkstamp_compile_direct_inputs +
          additional_transitive_inputs,
-@@ -808,6 +821,7 @@
+@@ -808,6 +966,7 @@
              linker_depset,
              crate_info.srcs,
              transitive_crate_outputs,
@@ -159,7 +373,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
              crate_info.compile_data,
              dep_info.transitive_proc_macro_data,
              toolchain.all_files,
-@@ -846,8 +860,27 @@
+@@ -846,8 +1005,17 @@
      # If stamping is enabled include the volatile and stable status info file
      stamp_info = [ctx.version_file, ctx.info_file] if stamp else []
  
@@ -170,17 +384,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
 +        ],
 +    ).to_list() + proc_macro_outputs
 +
-+    copy_to_directory_bin_action(
-+        ctx,
-+        name = transitive_crate_dir.basename,
-+        dst = transitive_crate_dir,
-+        copy_to_directory_bin = ctx.toolchains["@@bazel_lib+//lib:copy_to_directory_toolchain_type"].copy_to_directory_info.bin,
-+        files = transitive_crate_files,
-+        root_paths = [],
-+        replace_prefixes = {"**/": ""},
-+        hardlink = "auto",
-+        include_external_repositories = ["**"],
-+    )
++    _copy_transitive_crates(ctx, toolchain, transitive_crate_dir, transitive_crate_files)
 +
      compile_inputs = depset(
 -        linkstamp_outs + stamp_info,
@@ -188,7 +392,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
          transitive = [
              nolinkstamp_compile_inputs,
          ],
-@@ -870,7 +903,7 @@
+@@ -870,7 +1038,7 @@
          build_env_files = list(build_env_files)
          build_env_files.append(build_env_file)
      compile_inputs = depset(build_env_files + lint_files, transitive = [build_script_compile_inputs, compile_inputs])
@@ -197,7 +401,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
  
  def _will_emit_object_file(emit):
      for e in emit:
-@@ -892,6 +925,7 @@
+@@ -892,6 +1060,7 @@
          feature_configuration,
          crate_info,
          dep_info,
@@ -205,7 +409,15 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
          linkstamp_outs,
          ambiguous_libs,
          output_hash,
-@@ -1155,7 +1189,13 @@
+@@ -923,6 +1092,7 @@
+         feature_configuration (FeatureConfiguration): Class used to construct command lines from CROSSTOOL features.
+         crate_info (CrateInfo): The CrateInfo provider of the target crate
+         dep_info (DepInfo): The DepInfo provider of the target crate
++        transitive_crate_dir (File): Directory containing consolidated crate outputs.
+         linkstamp_outs (list): Linkstamp outputs of native dependencies
+         ambiguous_libs (dict): Ambiguous libs, see `_disambiguate_libs`
+         output_hash (str): The hashed path of the crate root
+@@ -1155,7 +1325,13 @@
      use_metadata = _depend_on_metadata(crate_info, force_depend_on_objects)
  
      # These always need to be added, even if not linking this crate.
@@ -220,7 +432,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
  
      needs_extern_proc_macro_flag = _is_proc_macro(crate_info) and crate_info.edition != "2015"
      if needs_extern_proc_macro_flag:
-@@ -1359,7 +1399,11 @@
+@@ -1359,7 +1535,11 @@
          rust_flags = rust_flags + ctx.attr.lint_config[LintsInfo].rustc_lint_flags
          lint_files = lint_files + ctx.attr.lint_config[LintsInfo].rustc_lint_files
  
@@ -233,15 +445,18 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
          ctx = ctx,
          file = ctx.file,
          files = ctx.files,
-@@ -1372,6 +1416,7 @@
+@@ -1369,8 +1549,10 @@
+         feature_configuration = feature_configuration,
+         crate_info = crate_info,
+         dep_info = dep_info,
++        proc_macro_deps = proc_macro_deps,
          build_info = build_info,
          lint_files = lint_files,
-         stamp = stamp,
 +        transitive_crate_dir = transitive_crate_dir,
+         stamp = stamp,
          experimental_use_cc_common_link = experimental_use_cc_common_link,
      )
- 
-@@ -1410,6 +1455,7 @@
+@@ -1410,6 +1592,7 @@
          feature_configuration = feature_configuration,
          crate_info = crate_info,
          dep_info = dep_info,
@@ -249,7 +464,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
          linkstamp_outs = linkstamp_outs,
          ambiguous_libs = ambiguous_libs,
          output_hash = output_hash,
-@@ -1437,6 +1483,7 @@
+@@ -1437,6 +1620,7 @@
              feature_configuration = feature_configuration,
              crate_info = crate_info,
              dep_info = dep_info,
@@ -257,7 +472,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
              linkstamp_outs = linkstamp_outs,
              ambiguous_libs = ambiguous_libs,
              output_hash = output_hash,
-@@ -1509,7 +1556,8 @@
+@@ -1509,7 +1693,8 @@
              inputs = compile_inputs,
              outputs = action_outputs,
              env = env,
@@ -267,7 +482,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
              mnemonic = "Rustc",
              progress_message = "Compiling Rust {} {}{} ({} file{})".format(
                  crate_info.type,
-@@ -1527,7 +1575,8 @@
+@@ -1527,7 +1712,8 @@
                  inputs = compile_inputs,
                  outputs = [build_metadata] + [x for x in [rustc_rmeta_output] if x],
                  env = env,
@@ -277,7 +492,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
                  mnemonic = "RustcMetadata",
                  progress_message = "Compiling Rust metadata {} {}{} ({} file{})".format(
                      crate_info.type,
-@@ -1547,7 +1596,8 @@
+@@ -1547,7 +1733,8 @@
              inputs = compile_inputs,
              outputs = action_outputs,
              env = env,
@@ -287,7 +502,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
              mnemonic = "Rustc",
              progress_message = "Compiling Rust (without process_wrapper) {} {}{} ({} file{})".format(
                  crate_info.type,
-@@ -2119,7 +2169,7 @@
+@@ -2119,7 +2306,7 @@
          dirs[f.dirname] = None
      return dirs.keys()
  
@@ -296,7 +511,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
      """Adds link flags to an Args object reference
  
      Args:
-@@ -2137,15 +2187,42 @@
+@@ -2137,6 +2324,11 @@
          ],
      ) if force_all_deps_direct else dep_info.direct_crates
  
@@ -308,12 +523,11 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
      crate_to_link_flags = _crate_to_link_flag_metadata if use_metadata else _crate_to_link_flag
      args.add_all(direct_crates, uniquify = True, map_each = crate_to_link_flags)
  
--    args.add_all(
--        dep_info.transitive_crates,
--        map_each = _get_crate_dirname,
--        uniquify = True,
--        format_each = "-Ldependency=%s",
--    )
+@@ -2146,6 +2338,34 @@
+         uniquify = True,
+         format_each = "-Ldependency=%s",
+     )
++
 +def _add_crate_link_flag_in_dir(args, crate, transitive_crate_dir, use_metadata):
 +    """A helper macro used by `add_crate_link_flags` for adding crate link flags to a Arg object
 +
@@ -325,7 +539,6 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
 +    Returns:
 +        list: Link flags for the given provider
 +    """
-+    # This is AliasableDepInfo, we should use the alias as a crate name
 +    if hasattr(crate, "dep"):
 +        name = crate.name
 +        crate_info = crate.dep
@@ -334,7 +547,7 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
 +        crate_info = crate
 +
 +    if _is_proc_macro(crate_info):
-+        args.add(crate_info.output, format = "--extern={}=%s".format(name))
++        args.add("--extern={}={}/{}".format(name, transitive_crate_dir.path, crate_info.output.basename))
 +        return
 +
 +    lib_or_meta = crate_info.metadata if use_metadata else crate_info.output
@@ -345,37 +558,34 @@ diff -ruN a/rust/private/rustc.bzl b/rust/private/rustc.bzl
  
  def _crate_to_link_flag_metadata(crate):
      """A helper macro used by `add_crate_link_flags` for adding crate link flags to a Arg object
-diff -ruN a/rust/private/rustdoc.bzl b/rust/private/rustdoc.bzl
---- a/rust/private/rustdoc.bzl	2025-12-09 17:08:33
-+++ b/rust/private/rustdoc.bzl	2026-01-12 22:18:16
-@@ -97,13 +97,17 @@
- 
-     cc_toolchain, feature_configuration = find_cc_toolchain(ctx)
- 
-+    transitive_crate_dir = ctx.actions.declare_directory(ctx.label.name + "_transitive_crates")
-+    transitive_crate_dir_args = ctx.actions.args()
-+    transitive_crate_dir_args.add_all([transitive_crate_dir], expand_directories = False, format_each = "-Ldependency=%s")
-+
-     dep_info, build_info, _ = collect_deps(
-         deps = crate_info.deps.to_list(),
-         proc_macro_deps = crate_info.proc_macro_deps.to_list(),
+diff -ruN rules_rust_src/rust/private/rustdoc.bzl rules_rust_mod/rust/private/rustdoc.bzl
+--- rules_rust_src/rust/private/rustdoc.bzl	2025-12-09 17:08:33
++++ rules_rust_mod/rust/private/rustdoc.bzl	2026-01-13 09:56:14
+@@ -103,7 +103,11 @@
          aliases = crate_info.aliases,
      )
  
 -    compile_inputs, out_dir, build_env_files, build_flags_files, linkstamp_outs, ambiguous_libs = collect_inputs(
++    transitive_crate_dir = ctx.actions.declare_directory(ctx.label.name + "_transitive_crates")
++    transitive_crate_dir_args = ctx.actions.args()
++    transitive_crate_dir_args.add_all([transitive_crate_dir], expand_directories = False, format_each = "-Ldependency=%s")
++
 +    compile_inputs, out_dir, build_env_files, build_flags_files, linkstamp_outs, ambiguous_libs, _proc_macro_outputs = collect_inputs(
          ctx = ctx,
          file = ctx.file,
          files = ctx.files,
-@@ -115,6 +119,7 @@
+@@ -113,8 +117,10 @@
+         feature_configuration = feature_configuration,
+         crate_info = crate_info,
          dep_info = dep_info,
++        proc_macro_deps = crate_info.proc_macro_deps.to_list(),
          build_info = build_info,
          lint_files = lint_files,
 +        transitive_crate_dir = transitive_crate_dir,
          # If this is a rustdoc test, we need to depend on rlibs rather than .rmeta.
          force_depend_on_objects = is_test,
          include_link_flags = False,
-@@ -167,7 +172,7 @@
+@@ -167,7 +173,7 @@
          executable = ctx.executable._process_wrapper,
          inputs = all_inputs,
          env = env,
@@ -384,9 +594,9 @@ diff -ruN a/rust/private/rustdoc.bzl b/rust/private/rustdoc.bzl
          tools = [toolchain.rust_doc],
      )
  
-diff -ruN a/rust/private/unpretty.bzl b/rust/private/unpretty.bzl
---- a/rust/private/unpretty.bzl	2025-12-09 17:08:33
-+++ b/rust/private/unpretty.bzl	2026-01-12 22:18:19
+diff -ruN rules_rust_src/rust/private/unpretty.bzl rules_rust_mod/rust/private/unpretty.bzl
+--- rules_rust_src/rust/private/unpretty.bzl	2025-12-09 17:08:33
++++ rules_rust_mod/rust/private/unpretty.bzl	2026-01-13 09:56:14
 @@ -147,7 +147,11 @@
      )
      lint_files = []
@@ -400,15 +610,18 @@ diff -ruN a/rust/private/unpretty.bzl b/rust/private/unpretty.bzl
          ctx,
          ctx.rule.file,
          ctx.rule.files,
-@@ -160,6 +164,7 @@
+@@ -158,8 +162,10 @@
+         feature_configuration,
+         crate_info,
          dep_info,
++        crate_info.proc_macro_deps.to_list(),
          build_info,
          lint_files,
 +        transitive_crate_dir,
      )
  
      output_groups = {}
-@@ -217,7 +222,7 @@
+@@ -217,7 +223,7 @@
              inputs = compile_inputs,
              outputs = [unpretty_out],
              env = env,
@@ -417,3 +630,21 @@ diff -ruN a/rust/private/unpretty.bzl b/rust/private/unpretty.bzl
              mnemonic = mnemonic,
              toolchain = "@rules_rust//rust:toolchain_type",
          )
+diff -ruN rules_rust_src/rust/repositories.bzl rules_rust_mod/rust/repositories.bzl
+--- rules_rust_src/rust/repositories.bzl	2025-12-09 17:08:33
++++ rules_rust_mod/rust/repositories.bzl	2026-01-13 20:19:46
+@@ -43,12 +43,12 @@
+ # Note: Code in `.github/workflows/crate_universe.yaml` looks for this line, if you remove it or change its format, you will also need to update that code.
+ DEFAULT_TOOLCHAIN_TRIPLES = {
+     "aarch64-apple-darwin": "rust_macos_aarch64",
+-    "aarch64-pc-windows-msvc": "rust_windows_aarch64",
++    "aarch64-pc-windows-gnullvm": "rust_windows_aarch64",
+     "aarch64-unknown-linux-gnu": "rust_linux_aarch64",
+     "powerpc64le-unknown-linux-gnu": "rust_linux_powerpc64le",
+     "s390x-unknown-linux-gnu": "rust_linux_s390x",
+     "x86_64-apple-darwin": "rust_macos_x86_64",
+-    "x86_64-pc-windows-msvc": "rust_windows_x86_64",
++    "x86_64-pc-windows-gnullvm": "rust_windows_x86_64",
+     "x86_64-unknown-freebsd": "rust_freebsd_x86_64",
+     "x86_64-unknown-linux-gnu": "rust_linux_x86_64",
+ }
