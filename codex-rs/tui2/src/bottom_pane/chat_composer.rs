@@ -2955,6 +2955,7 @@ mod tests {
             "Ask Codex to do anything".to_string(),
             false,
         );
+        composer.set_steer_enabled(true);
 
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('あ'), KeyModifiers::NONE));
 
