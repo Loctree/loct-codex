@@ -519,12 +519,12 @@ impl ChatComposer {
         self.pending_pastes.clear();
         self.attached_images.clear();
 
+        self.textarea.set_text_with_elements(&text, &text_elements);
+
         let image_placeholders: HashSet<String> = text_elements
             .iter()
             .filter_map(|elem| elem.placeholder.clone())
             .collect();
-        self.textarea.set_text_with_elements(&text, &text_elements);
-
         for (idx, path) in local_image_paths.into_iter().enumerate() {
             let placeholder = local_image_label_text(idx + 1);
             if image_placeholders.contains(&placeholder) {
