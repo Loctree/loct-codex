@@ -75,29 +75,6 @@ impl From<SkillInstructions> for ResponseItem {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename = "developer_instructions", rename_all = "snake_case")]
-pub(crate) struct DeveloperInstructions {
-    text: String,
-}
-
-impl DeveloperInstructions {
-    pub fn into_text(self) -> String {
-        self.text
-    }
-}
-
-impl From<DeveloperInstructions> for ResponseItem {
-    fn from(di: DeveloperInstructions) -> Self {
-        ResponseItem::Message {
-            id: None,
-            role: "developer".to_string(),
-            content: vec![ContentItem::InputText {
-                text: di.into_text(),
-            }],
-        }
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;
