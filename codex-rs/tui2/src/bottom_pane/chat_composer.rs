@@ -721,7 +721,27 @@ impl ChatComposer {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
+                // If the current line starts with a custom prompt name and includes
+                // positional args for a numeric-style template, expand and submit
+                // immediately regardless of the popup selection.
                 let first_line = self.textarea.text().lines().next().unwrap_or("");
+                if let Some((name, _rest)) = parse_slash_name(first_line)
+                    && let Some(prompt_name) = name.strip_prefix(&format!("{PROMPTS_CMD_PREFIX}:"))
+                    && let Some(prompt) = self.custom_prompts.iter().find(|p| p.name == prompt_name)
+                    && let Some(expanded) =
+                        expand_if_numeric_with_positional_args(prompt, first_line)
+                {
+                    self.textarea.set_text("");
+                    return (
+                        InputResult::Submitted {
+                            text: expanded,
+                            // Expanded prompt is plain text; no UI element ranges to preserve.
+                            text_elements: Vec::new(),
+                        },
+                        true,
+                    );
+                }
+
                 if let Some(sel) = popup.selected_item() {
                     match sel {
                         CommandItem::Builtin(cmd) => {
