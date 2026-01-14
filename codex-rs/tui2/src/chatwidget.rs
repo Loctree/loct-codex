@@ -1752,7 +1752,7 @@ impl ChatWidget {
                             local_image_paths: self.bottom_pane.take_recent_submission_images(),
                             text_elements,
                         };
-                        self.queue_user_message_forced(user_message);
+                        self.queue_user_message(user_message);
                     }
                     InputResult::Command(cmd) => {
                         self.dispatch_command(cmd);
@@ -2049,14 +2049,6 @@ impl ChatWidget {
         } else {
             self.submit_user_message(user_message);
         }
-    }
-
-    fn queue_user_message_forced(&mut self, user_message: UserMessage) {
-        if user_message.text.is_empty() && user_message.local_image_paths.is_empty() {
-            return;
-        }
-        self.queued_user_messages.push_back(user_message);
-        self.refresh_queued_user_messages();
     }
 
     fn submit_user_message(&mut self, user_message: UserMessage) {
