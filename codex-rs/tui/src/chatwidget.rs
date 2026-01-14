@@ -1915,54 +1915,41 @@ impl ChatWidget {
                     self.request_redraw();
                 }
             }
-            _ => {
-                match self.bottom_pane.handle_key_event(key_event) {
-                    InputResult::Submitted {
+            _ => match self.bottom_pane.handle_key_event(key_event) {
+                InputResult::Submitted {
+                    text,
+                    text_elements,
+                } => {
+                    let user_message = UserMessage {
                         text,
+                        local_image_paths: self.bottom_pane.take_recent_submission_images(),
                         text_elements,
-                    } => {
-                        // If a task is running, queue the user input to be sent after the turn completes.
-                        let user_message = UserMessage {
-                            text,
-                            local_image_paths: self.bottom_pane.take_recent_submission_images(),
-                            text_elements,
-                        };
-                        if !self.is_session_configured() {
-                            self.queue_user_message(user_message);
-                        } else {
-                            self.submit_user_message(user_message);
-                        }
-                    }
-                    InputResult::Queued(text) => {
-                        // Tab queues the message if a task is running, otherwise submits immediately
-                        let user_message = UserMessage {
-                            text,
-                            local_image_paths: self.bottom_pane.take_recent_submission_images(),
-                            // Queued input does not carry UI element ranges yet.
-                            text_elements: Vec::new(),
-                        };
+                    };
+                    if !self.is_session_configured() {
                         self.queue_user_message(user_message);
+                    } else {
+                        self.submit_user_message(user_message);
                     }
-                    InputResult::Queued {
-                        text,
-                        text_elements,
-                    } => {
-                        let user_message = UserMessage {
-                            text,
-                            local_image_paths: self.bottom_pane.take_recent_submission_images(),
-                            text_elements,
-                        };
-                        self.queue_user_message(user_message);
-                    }
-                    InputResult::Command(cmd) => {
-                        self.dispatch_command(cmd);
-                    }
-                    InputResult::CommandWithArgs(cmd, args) => {
-                        self.dispatch_command_with_args(cmd, args);
-                    }
-                    InputResult::None => {}
                 }
-            }
+                InputResult::Queued {
+                    text,
+                    text_elements,
+                } => {
+                    let user_message = UserMessage {
+                        text,
+                        local_image_paths: self.bottom_pane.take_recent_submission_images(),
+                        text_elements,
+                    };
+                    self.queue_user_message(user_message);
+                }
+                InputResult::Command(cmd) => {
+                    self.dispatch_command(cmd);
+                }
+                InputResult::CommandWithArgs(cmd, args) => {
+                    self.dispatch_command_with_args(cmd, args);
+                }
+                InputResult::None => {}
+            },
         }
     }
 
