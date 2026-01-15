@@ -114,6 +114,7 @@ use codex_protocol::user_input::TextElement;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::bottom_pane::LocalImageAttachment;
 use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
 use crate::clipboard_paste::normalize_pasted_path;
@@ -486,6 +487,28 @@ impl ChatComposer {
         self.textarea.text().to_string()
     }
 
+    pub(crate) fn text_elements(&self) -> Vec<TextElement> {
+        self.textarea.text_elements()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn local_image_paths(&self) -> Vec<PathBuf> {
+        self.attached_images
+            .iter()
+            .map(|img| img.path.clone())
+            .collect()
+    }
+
+    pub(crate) fn local_images(&self) -> Vec<LocalImageAttachment> {
+        self.attached_images
+            .iter()
+            .map(|img| LocalImageAttachment {
+                placeholder: img.placeholder.clone(),
+                path: img.path.clone(),
+            })
+            .collect()
+    }
+
     /// Insert an attachment placeholder and track it for the next submission.
     pub fn attach_image(&mut self, path: PathBuf) {
         let image_number = self.attached_images.len() + 1;
@@ -497,9 +520,21 @@ impl ChatComposer {
             .push(AttachedImage { placeholder, path });
     }
 
+    #[cfg(test)]
     pub fn take_recent_submission_images(&mut self) -> Vec<PathBuf> {
         let images = std::mem::take(&mut self.attached_images);
         images.into_iter().map(|img| img.path).collect()
+    }
+
+    pub fn take_recent_submission_images_with_placeholders(&mut self) -> Vec<LocalImageAttachment> {
+        let images = std::mem::take(&mut self.attached_images);
+        images
+            .into_iter()
+            .map(|img| LocalImageAttachment {
+                placeholder: img.placeholder,
+                path: img.path,
+            })
+            .collect()
     }
 
     /// Flushes any due paste-burst state.
@@ -1830,6 +1865,8 @@ impl ChatComposer {
     }
 
     fn relabel_attached_images_and_update_placeholders(&mut self) {
+        // Renumber by insertion order (attachment list order), and update any matching elements
+        // regardless of where they appear in the text.
         for idx in 0..self.attached_images.len() {
             let expected = local_image_label_text(idx + 1);
             let current = self.attached_images[idx].placeholder.clone();
@@ -4150,6 +4187,69 @@ mod tests {
             }],
             composer.attached_images,
             "one image mapping remains"
+        );
+    }
+
+    #[test]
+    fn deleting_reordered_image_one_renumbers_text_in_place() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let path1 = PathBuf::from("/tmp/image_first.png");
+        let path2 = PathBuf::from("/tmp/image_second.png");
+        let placeholder1 = local_image_label_text(1);
+        let placeholder2 = local_image_label_text(2);
+
+        // Placeholders can be reordered in the text buffer; deleting image #1 should renumber
+        // image #2 wherever it appears, not just after the cursor.
+        let text = format!("Test {placeholder2} test {placeholder1}");
+        let start2 = text.find(&placeholder2).expect("placeholder2 present");
+        let start1 = text.find(&placeholder1).expect("placeholder1 present");
+        let text_elements = vec![
+            TextElement {
+                byte_range: ByteRange {
+                    start: start2,
+                    end: start2 + placeholder2.len(),
+                },
+                placeholder: Some(placeholder2),
+            },
+            TextElement {
+                byte_range: ByteRange {
+                    start: start1,
+                    end: start1 + placeholder1.len(),
+                },
+                placeholder: Some(placeholder1.clone()),
+            },
+        ];
+        composer.set_text_content(text, text_elements, vec![path1, path2.clone()]);
+
+        let end1 = start1 + placeholder1.len();
+        composer.textarea.set_cursor(end1);
+
+        composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+
+        assert_eq!(
+            composer.textarea.text(),
+            format!("Test {placeholder1} test ")
+        );
+        assert_eq!(
+            vec![AttachedImage {
+                path: path2,
+                placeholder: placeholder1
+            }],
+            composer.attached_images,
+            "attachment renumbered after deletion"
         );
     }
 

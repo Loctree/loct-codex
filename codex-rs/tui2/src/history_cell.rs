@@ -259,19 +259,33 @@ impl HistoryCell for UserHistoryCell {
                     if start >= end {
                         continue;
                     }
-                    if cursor < start {
-                        spans.push(Span::from(
-                            line_text[(cursor - line_start)..(start - line_start)].to_string(),
-                        ));
+                    let rel_start = start - line_start;
+                    let rel_end = end - line_start;
+                    // Guard against malformed UTF-8 byte ranges from upstream data; skip
+                    // invalid elements rather than panicking while rendering history.
+                    if !line_text.is_char_boundary(rel_start)
+                        || !line_text.is_char_boundary(rel_end)
+                    {
+                        continue;
                     }
-                    spans.push(Span::styled(
-                        line_text[(start - line_start)..(end - line_start)].to_string(),
-                        element_style,
-                    ));
-                    cursor = end;
+                    let rel_cursor = cursor - line_start;
+                    if cursor < start
+                        && line_text.is_char_boundary(rel_cursor)
+                        && let Some(segment) = line_text.get(rel_cursor..rel_start)
+                    {
+                        spans.push(Span::from(segment.to_string()));
+                    }
+                    if let Some(segment) = line_text.get(rel_start..rel_end) {
+                        spans.push(Span::styled(segment.to_string(), element_style));
+                        cursor = end;
+                    }
                 }
-                if cursor < line_end {
-                    spans.push(Span::from(line_text[(cursor - line_start)..].to_string()));
+                let rel_cursor = cursor - line_start;
+                if cursor < line_end
+                    && line_text.is_char_boundary(rel_cursor)
+                    && let Some(segment) = line_text.get(rel_cursor..)
+                {
+                    spans.push(Span::from(segment.to_string()));
                 }
                 let line = if spans.is_empty() {
                     Line::from(line_text.to_string()).style(style)
