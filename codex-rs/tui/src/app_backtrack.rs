@@ -352,7 +352,6 @@ impl App {
         prefill: BacktrackPrefill,
     ) {
         let cfg = self.chat_widget.config_ref().clone();
-        // Perform the fork via a thin wrapper for clarity/testability.
         let result = self
             .server
             .fork_thread(nth_user_message, cfg.clone(), ev.path.clone())
