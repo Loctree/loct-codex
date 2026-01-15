@@ -131,27 +131,15 @@ impl ContextManager {
     /// Replace image content in the last turn if it originated from a tool output.
     /// Returns true when a tool image was replaced, false otherwise.
     pub(crate) fn replace_last_turn_images(&mut self, placeholder: &str) -> bool {
-        let Some(index) = self.items.iter().rposition(|item| {
-            matches!(item, ResponseItem::FunctionCallOutput { .. })
-                || matches!(item, ResponseItem::Message { role, .. } if role == "user")
-        }) else {
+        let Some(index) = self
+            .items
+            .iter()
+            .rposition(|item| matches!(item, ResponseItem::FunctionCallOutput { .. }))
+        else {
             return false;
         };
 
         match &mut self.items[index] {
-            ResponseItem::Message { role, content, .. } if role == "user" => {
-                let mut replaced = false;
-                let placeholder = placeholder.to_string();
-                for item in content.iter_mut() {
-                    if matches!(item, ContentItem::InputImage { .. }) {
-                        *item = ContentItem::InputText {
-                            text: placeholder.clone(),
-                        };
-                        replaced = true;
-                    }
-                }
-                replaced
-            }
             ResponseItem::FunctionCallOutput { output, .. } => {
                 let Some(content_items) = output.content_items.as_mut() else {
                     return false;
