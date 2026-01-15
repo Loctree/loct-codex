@@ -1923,12 +1923,17 @@ impl ChatWidget {
                     text,
                     text_elements,
                 } => {
+                    // Enter should submit immediately when possible, even if a task is running.
                     let user_message = UserMessage {
                         text,
                         local_image_paths: self.bottom_pane.take_recent_submission_images(),
                         text_elements,
                     };
-                    self.queue_user_message(user_message);
+                    if self.bottom_pane.steer_enabled() && self.is_session_configured() {
+                        self.submit_user_message(user_message);
+                    } else {
+                        self.queue_user_message(user_message);
+                    }
                 }
                 InputResult::Queued {
                     text,

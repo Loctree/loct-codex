@@ -181,6 +181,10 @@ impl BottomPane {
         self.composer.set_steer_enabled(enabled);
     }
 
+    pub fn steer_enabled(&self) -> bool {
+        self.composer.steer_enabled()
+    }
+
     pub fn status_widget(&self) -> Option<&StatusIndicatorWidget> {
         self.status.as_ref()
     }
