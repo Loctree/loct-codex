@@ -352,6 +352,7 @@ async fn helpers_are_available_and_do_not_panic() {
         app_event_tx: tx,
         initial_prompt: None,
         initial_images: Vec::new(),
+        initial_text_elements: Vec::new(),
         enhanced_keys_supported: false,
         auth_manager,
         models_manager: thread_manager.get_models_manager(),
