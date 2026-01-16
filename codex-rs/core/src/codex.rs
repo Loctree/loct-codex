@@ -1519,6 +1519,7 @@ impl Session {
         self.record_conversation_items(turn_context, std::slice::from_ref(&response_item))
             .await;
 
+        // Derive a turn item and emit lifecycle events if applicable.
         if let Some(item) = parse_turn_item(&response_item) {
             self.emit_turn_item_started(turn_context, &item).await;
             self.emit_turn_item_completed(turn_context, item).await;
