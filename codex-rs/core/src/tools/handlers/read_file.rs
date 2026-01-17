@@ -10,6 +10,7 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
+use crate::tools::loctree_augment;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
@@ -145,8 +146,11 @@ impl ToolHandler for ReadFileHandler {
                 indentation::read_block(&path, offset, limit, indentation).await?
             }
         };
+        let loctree_context = loctree_augment::loctree_context_for_read(&path).await;
+        let content =
+            loctree_augment::append_loctree_context(collected.join("\n"), loctree_context);
         Ok(ToolOutput::Function {
-            content: collected.join("\n"),
+            content,
             content_items: None,
             success: Some(true),
         })

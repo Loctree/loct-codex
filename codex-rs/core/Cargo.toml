@@ -54,6 +54,7 @@ indexmap = { workspace = true }
 indoc = { workspace = true }
 keyring = { workspace = true, features = ["crypto-rust"] }
 libc = { workspace = true }
+loctree = { workspace = true }
 mcp-types = { workspace = true }
 once_cell = { workspace = true }
 os_info = { workspace = true }
