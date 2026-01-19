@@ -56,7 +56,17 @@ fn find_project_root(start_dir: &Path) -> PathBuf {
 }
 
 fn load_snapshot(root: &Path) -> Option<Snapshot> {
-    let mut snapshot = Snapshot::load(root).ok();
+    let mut snapshot = match Snapshot::load(root) {
+        Ok(snapshot) => Some(snapshot),
+        Err(err) => {
+            tracing::debug!(
+                root = %root.display(),
+                error = %err,
+                "Failed to load loctree snapshot"
+            );
+            None
+        }
+    };
 
     let needs_scan = match snapshot.as_ref() {
         Some(existing) => is_snapshot_stale(existing, root),
@@ -64,7 +74,17 @@ fn load_snapshot(root: &Path) -> Option<Snapshot> {
     };
 
     if needs_scan && run_scan(root) {
-        snapshot = Snapshot::load(root).ok().or(snapshot);
+        snapshot = match Snapshot::load(root) {
+            Ok(snapshot) => Some(snapshot),
+            Err(err) => {
+                tracing::warn!(
+                    root = %root.display(),
+                    error = %err,
+                    "Loctree scan completed but snapshot reload failed"
+                );
+                snapshot
+            }
+        };
     }
 
     snapshot
@@ -84,15 +104,40 @@ fn is_snapshot_stale(snapshot: &Snapshot, project: &Path) -> bool {
 }
 
 fn get_git_head(project: &Path) -> Option<String> {
-    let output = Command::new("git")
+    let output = match Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(project)
         .output()
-        .ok()?;
+    {
+        Ok(output) => output,
+        Err(err) => {
+            tracing::debug!(
+                project = %project.display(),
+                error = %err,
+                "Failed to run git rev-parse HEAD"
+            );
+            return None;
+        }
+    };
     if !output.status.success() {
+        tracing::debug!(
+            project = %project.display(),
+            status = ?output.status,
+            "git rev-parse HEAD returned non-zero status"
+        );
         return None;
     }
-    let hash = String::from_utf8(output.stdout).ok()?;
+    let hash = match String::from_utf8(output.stdout) {
+        Ok(hash) => hash,
+        Err(err) => {
+            tracing::debug!(
+                project = %project.display(),
+                error = %err,
+                "git rev-parse HEAD output was not valid UTF-8"
+            );
+            return None;
+        }
+    };
     let hash = hash.trim();
     if hash.is_empty() {
         None
@@ -117,7 +162,25 @@ fn run_scan_with_cli(project: &Path) -> bool {
         .stderr(Stdio::null())
         .output();
 
-    matches!(output, Ok(result) if result.status.success())
+    match output {
+        Ok(result) if result.status.success() => true,
+        Ok(result) => {
+            tracing::debug!(
+                project = %project.display(),
+                status = ?result.status,
+                "loct scan returned non-zero status"
+            );
+            false
+        }
+        Err(err) => {
+            tracing::debug!(
+                project = %project.display(),
+                error = %err,
+                "Failed to invoke loct scan"
+            );
+            false
+        }
+    }
 }
 
 fn run_scan_in_process(project: &Path) -> bool {
@@ -127,7 +190,17 @@ fn run_scan_in_process(project: &Path) -> bool {
         ..Default::default()
     };
 
-    run_init_with_options(&[project.to_path_buf()], &parsed, true).is_ok()
+    match run_init_with_options(&[project.to_path_buf()], &parsed, true) {
+        Ok(_) => true,
+        Err(err) => {
+            tracing::warn!(
+                project = %project.display(),
+                error = %err,
+                "Loctree scan failed"
+            );
+            false
+        }
+    }
 }
 
 pub(crate) async fn loctree_context_for_grep(pattern: &str, search_path: &Path) -> Option<String> {
@@ -137,10 +210,22 @@ pub(crate) async fn loctree_context_for_grep(pattern: &str, search_path: &Path) 
 
     let pattern = pattern.to_string();
     let search_path = search_path.to_path_buf();
-    tokio::task::spawn_blocking(move || loctree_context_for_grep_sync(&pattern, &search_path))
+    let pattern_log = pattern.clone();
+    let search_path_log = search_path.clone();
+    match tokio::task::spawn_blocking(move || loctree_context_for_grep_sync(&pattern, &search_path))
         .await
-        .ok()
-        .flatten()
+    {
+        Ok(context) => context,
+        Err(err) => {
+            tracing::warn!(
+                pattern = %pattern_log,
+                path = %search_path_log.display(),
+                error = %err,
+                "loctree grep context task failed"
+            );
+            None
+        }
+    }
 }
 
 pub(crate) async fn loctree_context_for_read(file_path: &Path) -> Option<String> {
@@ -149,10 +234,18 @@ pub(crate) async fn loctree_context_for_read(file_path: &Path) -> Option<String>
     }
 
     let file_path = file_path.to_path_buf();
-    tokio::task::spawn_blocking(move || loctree_context_for_read_sync(&file_path))
-        .await
-        .ok()
-        .flatten()
+    let file_path_log = file_path.clone();
+    match tokio::task::spawn_blocking(move || loctree_context_for_read_sync(&file_path)).await {
+        Ok(context) => context,
+        Err(err) => {
+            tracing::warn!(
+                path = %file_path_log.display(),
+                error = %err,
+                "loctree read context task failed"
+            );
+            None
+        }
+    }
 }
 
 pub(crate) async fn loctree_context_for_exec(cwd: &Path, command: &[String]) -> Option<String> {
@@ -162,10 +255,20 @@ pub(crate) async fn loctree_context_for_exec(cwd: &Path, command: &[String]) -> 
 
     let cwd = cwd.to_path_buf();
     let command = command.to_vec();
-    tokio::task::spawn_blocking(move || loctree_context_for_exec_sync(&cwd, &command))
-        .await
-        .ok()
-        .flatten()
+    let cwd_log = cwd.clone();
+    let command_log = command.clone();
+    match tokio::task::spawn_blocking(move || loctree_context_for_exec_sync(&cwd, &command)).await {
+        Ok(context) => context,
+        Err(err) => {
+            tracing::warn!(
+                cwd = %cwd_log.display(),
+                command = ?command_log,
+                error = %err,
+                "loctree exec context task failed"
+            );
+            None
+        }
+    }
 }
 
 pub(crate) fn append_loctree_context(mut content: String, context: Option<String>) -> String {
@@ -808,6 +911,13 @@ fn format_sections(sections: Vec<Section>) -> Option<String> {
 
 fn truncate_context(text: &str) -> String {
     let truncated = take_bytes_at_char_boundary(text, MAX_CONTEXT_BYTES);
+    if truncated.len() < text.len() {
+        tracing::debug!(
+            original_len = text.len(),
+            truncated_len = truncated.len(),
+            "Truncated loctree context to fit limit"
+        );
+    }
     truncated.to_string()
 }
 
