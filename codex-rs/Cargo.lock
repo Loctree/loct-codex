@@ -378,9 +378,12 @@ dependencies = [
 
 [[package]]
 name = "arc-swap"
-version = "1.7.1"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
+checksum = "51d03449bb8ca2cc2ef70869af31463d1ae5ccc8fa3e334b307203fbf815207e"
+dependencies = [
+ "rustversion",
+]
 
 [[package]]
 name = "arrayvec"
@@ -923,9 +926,9 @@ dependencies = [
 
 [[package]]
 name = "chrono"
-version = "0.4.42"
+version = "0.4.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "145052bdd345b87320e369255277e3fb5152762ad123a901ef5c262dd38fe8d2"
+checksum = "fac4744fb15ae8337dc853fee7fb3f4e48c0fbaa23d0afe49c447b4fab126118"
 dependencies = [
  "iana-time-zone",
  "js-sys",
@@ -1371,7 +1374,7 @@ dependencies = [
  "codex-windows-sandbox",
  "core-foundation 0.9.4",
  "core_test_support",
- "ctor 0.5.0",
+ "ctor 0.6.3",
  "dirs",
  "dunce",
  "encoding_rs",
@@ -1755,7 +1758,7 @@ dependencies = [
  "anyhow",
  "clap",
  "codex-process-hardening",
- "ctor 0.5.0",
+ "ctor 0.6.3",
  "libc",
  "reqwest",
  "serde",
@@ -2424,9 +2427,9 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.5.0"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67773048316103656a637612c4a62477603b777d91d9c62ff2290f9cde178fdb"
+checksum = "424e0138278faeb2b401f174ad17e715c829512d74f3d1e81eb43365c2e0590e"
 dependencies = [
  "ctor-proc-macro",
  "dtor",
@@ -2434,9 +2437,9 @@ dependencies = [
 
 [[package]]
 name = "ctor-proc-macro"
-version = "0.0.6"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2931af7e13dc045d8e9d26afccc6fa115d64e115c9c84b1166288b46f6782c2"
+checksum = "52560adf09603e58c9a7ee1fe1dcb95a16927b17c127f0ac02d6e768a0e25bc1"
 
 [[package]]
 name = "darling"
@@ -4761,9 +4764,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.28"
+version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "logos"
@@ -8322,9 +8325,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.48.0"
+version = "1.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff360e02eab121e0bc37a2d3b4d4dc622e6eda3a8e5253d5435ecf5bd4c68408"
+checksum = "72a2903cd7736441aac9df9d7688bd0ce48edccaadf181c3b90be801e81d3d86"
 dependencies = [
  "bytes",
  "libc",
