@@ -25,6 +25,8 @@ use tokio_util::io::ReaderStream;
 use tracing::debug;
 use tracing::trace;
 
+const X_REASONING_INCLUDED_HEADER: &str = "x-reasoning-included";
+
 /// Streams SSE events from an on-disk fixture for tests.
 pub fn stream_from_fixture(
     path: impl AsRef<Path>,
@@ -58,6 +60,10 @@ pub fn spawn_response_stream(
         .get("X-Models-Etag")
         .and_then(|v| v.to_str().ok())
         .map(ToString::to_string);
+    let reasoning_included = stream_response
+        .headers
+        .get(X_REASONING_INCLUDED_HEADER)
+        .is_some();
     if let Some(turn_state) = turn_state.as_ref()
         && let Some(header_value) = stream_response
             .headers
@@ -73,6 +79,11 @@ pub fn spawn_response_stream(
         }
         if let Some(etag) = models_etag {
             let _ = tx_event.send(Ok(ResponseEvent::ModelsEtag(etag))).await;
+        }
+        if reasoning_included {
+            let _ = tx_event
+                .send(Ok(ResponseEvent::ServerReasoningIncluded(true)))
+                .await;
         }
         process_sse(stream_response.bytes, tx_event, idle_timeout, telemetry).await;
     });
@@ -146,12 +157,18 @@ struct ResponseCompletedOutputTokensDetails {
 #[derive(Deserialize, Debug)]
 pub struct ResponsesStreamEvent {
     #[serde(rename = "type")]
-    kind: String,
+    pub(crate) kind: String,
     response: Option<Value>,
     item: Option<Value>,
     delta: Option<String>,
     summary_index: Option<i64>,
     content_index: Option<i64>,
+}
+
+impl ResponsesStreamEvent {
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
 }
 
 #[derive(Debug)]
@@ -280,7 +297,7 @@ pub fn process_responses_event(
                 if let Ok(item) = serde_json::from_value::<ResponseItem>(item_val) {
                     return Ok(Some(ResponseEvent::OutputItemAdded(item)));
                 }
-                debug!("failed to parse ResponseItem from output_item.done");
+                debug!("failed to parse ResponseItem from output_item.added");
             }
         }
         "response.reasoning_summary_part.added" => {
@@ -418,6 +435,7 @@ mod tests {
     use super::*;
     use assert_matches::assert_matches;
     use bytes::Bytes;
+    use codex_protocol::models::MessagePhase;
     use codex_protocol::models::ResponseItem;
     use futures::stream;
     use pretty_assertions::assert_eq;
@@ -481,7 +499,8 @@ mod tests {
             "item": {
                 "type": "message",
                 "role": "assistant",
-                "content": [{"type": "output_text", "text": "Hello"}]
+                "content": [{"type": "output_text", "text": "Hello"}],
+                "phase": "commentary"
             }
         })
         .to_string();
@@ -512,8 +531,11 @@ mod tests {
 
         assert_matches!(
             &events[0],
-            Ok(ResponseEvent::OutputItemDone(ResponseItem::Message { role, .. }))
-                if role == "assistant"
+            Ok(ResponseEvent::OutputItemDone(ResponseItem::Message {
+                role,
+                phase: Some(MessagePhase::Commentary),
+                ..
+            })) if role == "assistant"
         );
 
         assert_matches!(

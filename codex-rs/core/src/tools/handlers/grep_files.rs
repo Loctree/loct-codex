@@ -1,3 +1,4 @@
+use codex_protocol::models::FunctionCallOutputBody;
 use std::path::Path;
 use std::time::Duration;
 
@@ -94,16 +95,14 @@ impl ToolHandler for GrepFilesHandler {
                 loctree_context,
             );
             Ok(ToolOutput::Function {
-                content,
-                content_items: None,
+                body: FunctionCallOutputBody::Text(content),
                 success: Some(false),
             })
         } else {
             let content =
                 loctree_augment::append_loctree_context(search_results.join("\n"), loctree_context);
             Ok(ToolOutput::Function {
-                content,
-                content_items: None,
+                body: FunctionCallOutputBody::Text(content),
                 success: Some(true),
             })
         }

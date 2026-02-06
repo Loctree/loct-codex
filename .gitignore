@@ -92,3 +92,10 @@ __pycache__/
 *.pyc
 
 /.loctree
+
+# AI Context
+.ai-context/*
+!.ai-context/share/
+!.ai-context/share/summary.md
+!.ai-context/share/timeline.md
+/.ai-context
