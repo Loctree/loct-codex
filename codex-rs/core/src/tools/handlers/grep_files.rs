@@ -44,7 +44,12 @@ impl ToolHandler for GrepFilesHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
-        let ToolInvocation { payload, turn, .. } = invocation;
+        let ToolInvocation {
+            payload,
+            session,
+            turn,
+            ..
+        } = invocation;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
@@ -86,8 +91,14 @@ impl ToolHandler for GrepFilesHandler {
         let search_results =
             run_rg_search(pattern, include.as_deref(), &search_path, limit, &turn.cwd).await?;
 
-        let loctree_context =
-            loctree_augment::loctree_context_for_grep(pattern, &search_path).await;
+        let loctree_context = if session
+            .features()
+            .enabled(crate::features::Feature::LoctreeAugment)
+        {
+            loctree_augment::loctree_context_for_grep(pattern, &search_path).await
+        } else {
+            None
+        };
 
         if search_results.is_empty() {
             let content = loctree_augment::append_loctree_context(

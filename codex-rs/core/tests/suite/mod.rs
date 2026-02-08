@@ -20,6 +20,9 @@ const CODEX_HOME_ENV_VAR: &str = "CODEX_HOME";
 // NOTE: this doesn't work on ARM
 #[ctor]
 pub static CODEX_ALIASES_TEMP_DIR: TestCodexAliasesGuard = unsafe {
+    // Ensure the test process has enough file descriptors for parallel mocks/watchers.
+    core_test_support::bump_nofile_limit_for_tests();
+
     #[allow(clippy::unwrap_used)]
     let codex_home = tempfile::Builder::new()
         .prefix("codex-core-tests")

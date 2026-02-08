@@ -335,8 +335,11 @@ impl ShellHandler {
             Err(err) => return Err(err),
         };
 
-        let loctree_context =
-            loctree_augment::loctree_context_for_exec(&exec_params.cwd, &exec_params.command).await;
+        let loctree_context = if features.enabled(crate::features::Feature::LoctreeAugment) {
+            loctree_augment::loctree_context_for_exec(&exec_params.cwd, &exec_params.command).await
+        } else {
+            None
+        };
         let content = if freeform {
             loctree_augment::append_loctree_context(content, loctree_context)
         } else {

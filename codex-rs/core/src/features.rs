@@ -129,6 +129,8 @@ pub enum Feature {
     ResponsesWebsockets,
     /// Enable Responses API websocket v2 mode.
     ResponsesWebsocketsV2,
+    /// Augment tool outputs with loctree analysis (find/slice/impact/focus).
+    LoctreeAugment,
 }
 
 impl Feature {
@@ -434,6 +436,16 @@ pub const FEATURES: &[FeatureSpec] = &[
             name: "Shell snapshot",
             menu_description: "Snapshot your shell environment to avoid re-running login scripts for every command.",
             announcement: "NEW! Try shell snapshotting to make your Codex faster. Enable in /experimental!",
+        },
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::LoctreeAugment,
+        key: "loctree_augment",
+        stage: Stage::Experimental {
+            name: "Loctree augmentation",
+            menu_description: "Augment tool outputs with extra loctree context (find/slice/impact/focus).",
+            announcement: "NEW: Loctree augmentation can enrich tool outputs with codebase context. Enable in /experimental if you want it!",
         },
         default_enabled: false,
     },

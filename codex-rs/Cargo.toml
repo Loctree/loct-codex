@@ -55,7 +55,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.98.0-loct"
+version = "0.98.0-loct2"
 # Track the edition for all workspace crates in one place. Individual
 # crates can still override this value, but keeping it here means new
 # crates created with `cargo new -w ...` automatically inherit the 2024
@@ -165,7 +165,7 @@ keyring = { version = "3.6", default-features = false }
 landlock = "0.4.4"
 lazy_static = "1"
 libc = "0.2.177"
-loctree = "0.8.9"
+loctree = "0.8.11"
 log = "0.4"
 lru = "0.16.3"
 maplit = "1.0.2"

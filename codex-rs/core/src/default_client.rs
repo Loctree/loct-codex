@@ -316,9 +316,18 @@ mod tests {
         let user_agent = get_codex_user_agent();
         let originator = regex_lite::escape(originator().value.as_str());
         let re = Regex::new(&format!(
-            r"^{originator}/\d+\.\d+\.\d+ \(Mac OS \d+\.\d+\.\d+; (x86_64|arm64)\) (\S+)$"
+            // Example:
+            //   codex_cli_rs/1.2.3 (Mac OS 15.3; arm64) Apple_Terminal/2.14.1
+            //   codex_cli_rs/0.98.0-loct (Mac OS 26.3.0; arm64) iTerm.app/3.6.7beta3
+            //
+            // `os_info::Version` may be `major.minor` or `major.minor.patch`, and
+            // the terminal UA can contain spaces, so keep the regex flexible.
+            r"^{originator}/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)? \(Mac OS \d+(?:\.\d+){{1,2}}; (x86_64|arm64)\) (.+)$"
         ))
         .unwrap();
-        assert!(re.is_match(&user_agent));
+        assert!(
+            re.is_match(&user_agent),
+            "user_agent did not match: {user_agent}"
+        );
     }
 }
