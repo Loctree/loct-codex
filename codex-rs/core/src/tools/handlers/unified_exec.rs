@@ -243,12 +243,10 @@ impl ToolHandler for UnifiedExecHandler {
         if session
             .features()
             .enabled(crate::features::Feature::LoctreeAugment)
+            && let Some((cwd, command)) = loctree_hint
         {
-            if let Some((cwd, command)) = loctree_hint {
-                let loctree_context =
-                    loctree_augment::loctree_context_for_exec(&cwd, &command).await;
-                content = loctree_augment::append_loctree_context(content, loctree_context);
-            }
+            let loctree_context = loctree_augment::loctree_context_for_exec(&cwd, &command).await;
+            content = loctree_augment::append_loctree_context(content, loctree_context);
         }
 
         Ok(ToolOutput::Function {
