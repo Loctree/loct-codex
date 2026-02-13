@@ -195,6 +195,7 @@ impl ToolHandler for UnifiedExecHandler {
                             yield_time_ms,
                             max_output_tokens,
                             workdir,
+                            network: context.turn.network.clone(),
                             tty,
                             sandbox_permissions,
                             justification,

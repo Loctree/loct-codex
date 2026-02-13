@@ -1,6 +1,7 @@
 #![expect(clippy::expect_used)]
 
 use codex_utils_cargo_bin::CargoBinError;
+use ctor::ctor;
 use tempfile::TempDir;
 
 use codex_core::CodexThread;
@@ -17,6 +18,13 @@ pub mod responses;
 pub mod streaming_sse;
 pub mod test_codex;
 pub mod test_codex_exec;
+
+#[ctor]
+fn initialize_test_process() {
+    codex_core::test_support::set_thread_manager_test_mode(true);
+    codex_core::test_support::set_deterministic_process_ids(true);
+    bump_nofile_limit_for_tests();
+}
 
 /// CI/dev environments sometimes run with a low default `ulimit -n` (e.g. 256).
 /// Our integration suite can spin up many mock servers and watchers in parallel,

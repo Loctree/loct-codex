@@ -7,11 +7,14 @@ use crate::policy::normalize_host;
 use crate::reasons::REASON_DENIED;
 use crate::reasons::REASON_NOT_ALLOWED;
 use crate::reasons::REASON_NOT_ALLOWED_LOCAL;
+use crate::state::NetworkProxyConstraintError;
 use crate::state::NetworkProxyConstraints;
+#[cfg(test)]
 use crate::state::build_config_state;
 use crate::state::validate_policy_against_constraints;
 use anyhow::Context;
 use anyhow::Result;
+use async_trait::async_trait;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use globset::GlobSet;
 use serde::Serialize;
@@ -19,19 +22,19 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::SystemTime;
 use time::OffsetDateTime;
 use tokio::net::lookup_host;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
+use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
 const MAX_BLOCKED_EVENTS: usize = 200;
 const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
+const NETWORK_POLICY_VIOLATION_PREFIX: &str = "CODEX_NETWORK_POLICY_VIOLATION";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostBlockReason {
@@ -70,6 +73,14 @@ pub struct BlockedRequest {
     pub method: Option<String>,
     pub mode: Option<NetworkMode>,
     pub protocol: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
     pub timestamp: i64,
 }
 
@@ -80,6 +91,10 @@ pub struct BlockedRequestArgs {
     pub method: Option<String>,
     pub mode: Option<NetworkMode>,
     pub protocol: String,
+    pub attempt_id: Option<String>,
+    pub decision: Option<String>,
+    pub source: Option<String>,
+    pub port: Option<u16>,
 }
 
 impl BlockedRequest {
@@ -91,6 +106,10 @@ impl BlockedRequest {
             method,
             mode,
             protocol,
+            attempt_id,
+            decision,
+            source,
+            port,
         } = args;
         Self {
             host,
@@ -99,38 +118,53 @@ impl BlockedRequest {
             method,
             mode,
             protocol,
+            attempt_id,
+            decision,
+            source,
+            port,
             timestamp: unix_timestamp(),
         }
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct ConfigState {
-    pub(crate) config: NetworkProxyConfig,
-    pub(crate) allow_set: GlobSet,
-    pub(crate) deny_set: GlobSet,
-    pub(crate) constraints: NetworkProxyConstraints,
-    pub(crate) layer_mtimes: Vec<LayerMtime>,
-    pub(crate) cfg_path: PathBuf,
-    pub(crate) blocked: VecDeque<BlockedRequest>,
-}
-
-#[derive(Clone)]
-pub(crate) struct LayerMtime {
-    pub(crate) path: PathBuf,
-    pub(crate) mtime: Option<SystemTime>,
-}
-
-impl LayerMtime {
-    pub(crate) fn new(path: PathBuf) -> Self {
-        let mtime = path.metadata().and_then(|m| m.modified()).ok();
-        Self { path, mtime }
+fn blocked_request_violation_log_line(entry: &BlockedRequest) -> String {
+    match serde_json::to_string(entry) {
+        Ok(json) => format!("{NETWORK_POLICY_VIOLATION_PREFIX} {json}"),
+        Err(err) => {
+            debug!("failed to serialize blocked request for violation log: {err}");
+            format!(
+                "{NETWORK_POLICY_VIOLATION_PREFIX} host={} reason={}",
+                entry.host, entry.reason
+            )
+        }
     }
 }
 
 #[derive(Clone)]
+pub struct ConfigState {
+    pub config: NetworkProxyConfig,
+    pub allow_set: GlobSet,
+    pub deny_set: GlobSet,
+    pub constraints: NetworkProxyConstraints,
+    pub blocked: VecDeque<BlockedRequest>,
+    pub blocked_total: u64,
+}
+
+#[async_trait]
+pub trait ConfigReloader: Send + Sync {
+    /// Human-readable description of where config is loaded from, for logs.
+    fn source_label(&self) -> String;
+
+    /// Return a freshly loaded state if a reload is needed; otherwise, return `None`.
+    async fn maybe_reload(&self) -> Result<Option<ConfigState>>;
+
+    /// Force a reload, regardless of whether a change was detected.
+    async fn reload_now(&self) -> Result<ConfigState>;
+}
+
 pub struct NetworkProxyState {
     state: Arc<RwLock<ConfigState>>,
+    reloader: Arc<dyn ConfigReloader>,
 }
 
 impl std::fmt::Debug for NetworkProxyState {
@@ -141,12 +175,21 @@ impl std::fmt::Debug for NetworkProxyState {
     }
 }
 
+impl Clone for NetworkProxyState {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            reloader: self.reloader.clone(),
+        }
+    }
+}
+
 impl NetworkProxyState {
-    pub async fn new() -> Result<Self> {
-        let cfg_state = build_config_state().await?;
-        Ok(Self {
-            state: Arc::new(RwLock::new(cfg_state)),
-        })
+    pub fn with_reloader(state: ConfigState, reloader: Arc<dyn ConfigReloader>) -> Self {
+        Self {
+            state: Arc::new(RwLock::new(state)),
+            reloader,
+        }
     }
 
     pub async fn current_cfg(&self) -> Result<NetworkProxyConfig> {
@@ -173,26 +216,28 @@ impl NetworkProxyState {
     }
 
     pub async fn force_reload(&self) -> Result<()> {
-        let (previous_cfg, cfg_path) = {
+        let previous_cfg = {
             let guard = self.state.read().await;
-            (guard.config.clone(), guard.cfg_path.clone())
+            guard.config.clone()
         };
 
-        match build_config_state().await {
+        match self.reloader.reload_now().await {
             Ok(mut new_state) => {
                 // Policy changes are operationally sensitive; logging diffs makes changes traceable
                 // without needing to dump full config blobs (which can include unrelated settings).
                 log_policy_changes(&previous_cfg, &new_state.config);
-                let mut guard = self.state.write().await;
-                new_state.blocked = guard.blocked.clone();
-                *guard = new_state;
-                let path = guard.cfg_path.display();
-                info!("reloaded config from {path}");
+                {
+                    let mut guard = self.state.write().await;
+                    new_state.blocked = guard.blocked.clone();
+                    *guard = new_state;
+                }
+                let source = self.reloader.source_label();
+                info!("reloaded config from {source}");
                 Ok(())
             }
             Err(err) => {
-                let path = cfg_path.display();
-                warn!("failed to reload config from {path}: {err}; keeping previous config");
+                let source = self.reloader.source_label();
+                warn!("failed to reload config from {source}: {err}; keeping previous config");
                 Err(err)
             }
         }
@@ -267,12 +312,57 @@ impl NetworkProxyState {
 
     pub async fn record_blocked(&self, entry: BlockedRequest) -> Result<()> {
         self.reload_if_needed().await?;
+        let violation_line = blocked_request_violation_log_line(&entry);
         let mut guard = self.state.write().await;
+        let host = entry.host.clone();
+        let reason = entry.reason.clone();
+        let decision = entry.decision.clone();
+        let source = entry.source.clone();
+        let protocol = entry.protocol.clone();
+        let port = entry.port;
+        let attempt_id = entry.attempt_id.clone();
         guard.blocked.push_back(entry);
+        guard.blocked_total = guard.blocked_total.saturating_add(1);
+        let total = guard.blocked_total;
         while guard.blocked.len() > MAX_BLOCKED_EVENTS {
             guard.blocked.pop_front();
         }
+        debug!(
+            "recorded blocked request telemetry (total={}, host={}, reason={}, decision={:?}, source={:?}, protocol={}, port={:?}, attempt_id={:?}, buffered={})",
+            total,
+            host,
+            reason,
+            decision,
+            source,
+            protocol,
+            port,
+            attempt_id,
+            guard.blocked.len()
+        );
+        debug!("{violation_line}");
         Ok(())
+    }
+
+    /// Returns a snapshot of buffered blocked-request entries without consuming
+    /// them.
+    pub async fn blocked_snapshot(&self) -> Result<Vec<BlockedRequest>> {
+        self.reload_if_needed().await?;
+        let guard = self.state.read().await;
+        Ok(guard.blocked.iter().cloned().collect())
+    }
+
+    pub async fn latest_blocked_for_attempt(
+        &self,
+        attempt_id: &str,
+    ) -> Result<Option<BlockedRequest>> {
+        self.reload_if_needed().await?;
+        let guard = self.state.read().await;
+        Ok(guard
+            .blocked
+            .iter()
+            .rev()
+            .find(|entry| entry.attempt_id.as_deref() == Some(attempt_id))
+            .cloned())
     }
 
     /// Drain and return the buffered blocked-request entries in FIFO order.
@@ -353,6 +443,7 @@ impl NetworkProxyState {
             };
 
             validate_policy_against_constraints(&candidate, &constraints)
+                .map_err(NetworkProxyConstraintError::into_anyhow)
                 .context("network.mode constrained by managed config")?;
 
             let mut guard = self.state.write().await;
@@ -367,24 +458,29 @@ impl NetworkProxyState {
     }
 
     async fn reload_if_needed(&self) -> Result<()> {
-        let needs_reload = {
-            let guard = self.state.read().await;
-            guard.layer_mtimes.iter().any(|layer| {
-                let metadata = std::fs::metadata(&layer.path).ok();
-                match (metadata.and_then(|m| m.modified().ok()), layer.mtime) {
-                    (Some(new_mtime), Some(old_mtime)) => new_mtime > old_mtime,
-                    (Some(_), None) => true,
-                    (None, Some(_)) => true,
-                    (None, None) => false,
+        match self.reloader.maybe_reload().await? {
+            None => Ok(()),
+            Some(mut new_state) => {
+                let (previous_cfg, blocked, blocked_total) = {
+                    let guard = self.state.read().await;
+                    (
+                        guard.config.clone(),
+                        guard.blocked.clone(),
+                        guard.blocked_total,
+                    )
+                };
+                log_policy_changes(&previous_cfg, &new_state.config);
+                new_state.blocked = blocked;
+                new_state.blocked_total = blocked_total;
+                {
+                    let mut guard = self.state.write().await;
+                    *guard = new_state;
                 }
-            })
-        };
-
-        if !needs_reload {
-            return Ok(());
+                let source = self.reloader.source_label();
+                info!("reloaded config from {source}");
+                Ok(())
+            }
         }
-
-        self.force_reload().await
     }
 }
 
@@ -488,22 +584,27 @@ pub(crate) fn network_proxy_state_for_policy(
     network.enabled = true;
     network.mode = NetworkMode::Full;
     let config = NetworkProxyConfig { network };
+    let state = build_config_state(config, NetworkProxyConstraints::default()).unwrap();
 
-    let allow_set = crate::policy::compile_globset(&config.network.allowed_domains).unwrap();
-    let deny_set = crate::policy::compile_globset(&config.network.denied_domains).unwrap();
+    NetworkProxyState::with_reloader(state, Arc::new(NoopReloader))
+}
 
-    let state = ConfigState {
-        config,
-        allow_set,
-        deny_set,
-        constraints: NetworkProxyConstraints::default(),
-        layer_mtimes: Vec::new(),
-        cfg_path: PathBuf::from("/nonexistent/config.toml"),
-        blocked: VecDeque::new(),
-    };
+#[cfg(test)]
+struct NoopReloader;
 
-    NetworkProxyState {
-        state: Arc::new(RwLock::new(state)),
+#[cfg(test)]
+#[async_trait]
+impl ConfigReloader for NoopReloader {
+    fn source_label(&self) -> String {
+        "test config state".to_string()
+    }
+
+    async fn maybe_reload(&self) -> Result<Option<ConfigState>> {
+        Ok(None)
+    }
+
+    async fn reload_now(&self) -> Result<ConfigState> {
+        Err(anyhow::anyhow!("force reload is not supported in tests"))
     }
 }
 
@@ -548,6 +649,153 @@ mod tests {
             // resolve unknown hostnames to private IPs, which would trigger `not_allowed_local`).
             state.host_blocked("8.8.8.8", 80).await.unwrap(),
             HostBlockDecision::Blocked(HostBlockReason::NotAllowed)
+        );
+    }
+
+    #[tokio::test]
+    async fn blocked_snapshot_does_not_consume_entries() {
+        let state = network_proxy_state_for_policy(NetworkProxySettings::default());
+
+        state
+            .record_blocked(BlockedRequest::new(BlockedRequestArgs {
+                host: "google.com".to_string(),
+                reason: "not_allowed".to_string(),
+                client: None,
+                method: Some("GET".to_string()),
+                mode: None,
+                protocol: "http".to_string(),
+                attempt_id: None,
+                decision: Some("ask".to_string()),
+                source: Some("decider".to_string()),
+                port: Some(80),
+            }))
+            .await
+            .expect("entry should be recorded");
+
+        let snapshot = state
+            .blocked_snapshot()
+            .await
+            .expect("snapshot should succeed");
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].host, "google.com");
+        assert_eq!(snapshot[0].decision.as_deref(), Some("ask"));
+
+        let drained = state
+            .drain_blocked()
+            .await
+            .expect("drain should include snapshot entry");
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].host, snapshot[0].host);
+        assert_eq!(drained[0].reason, snapshot[0].reason);
+        assert_eq!(drained[0].decision, snapshot[0].decision);
+        assert_eq!(drained[0].source, snapshot[0].source);
+        assert_eq!(drained[0].port, snapshot[0].port);
+    }
+
+    #[tokio::test]
+    async fn latest_blocked_for_attempt_returns_latest_matching_entry() {
+        let state = network_proxy_state_for_policy(NetworkProxySettings::default());
+
+        state
+            .record_blocked(BlockedRequest::new(BlockedRequestArgs {
+                host: "one.example.com".to_string(),
+                reason: "not_allowed".to_string(),
+                client: None,
+                method: Some("GET".to_string()),
+                mode: None,
+                protocol: "http".to_string(),
+                attempt_id: Some("attempt-1".to_string()),
+                decision: Some("ask".to_string()),
+                source: Some("decider".to_string()),
+                port: Some(80),
+            }))
+            .await
+            .expect("entry should be recorded");
+        state
+            .record_blocked(BlockedRequest::new(BlockedRequestArgs {
+                host: "two.example.com".to_string(),
+                reason: "not_allowed".to_string(),
+                client: None,
+                method: Some("GET".to_string()),
+                mode: None,
+                protocol: "http".to_string(),
+                attempt_id: Some("attempt-2".to_string()),
+                decision: Some("ask".to_string()),
+                source: Some("decider".to_string()),
+                port: Some(80),
+            }))
+            .await
+            .expect("entry should be recorded");
+        state
+            .record_blocked(BlockedRequest::new(BlockedRequestArgs {
+                host: "three.example.com".to_string(),
+                reason: "not_allowed".to_string(),
+                client: None,
+                method: Some("GET".to_string()),
+                mode: None,
+                protocol: "http".to_string(),
+                attempt_id: Some("attempt-1".to_string()),
+                decision: Some("ask".to_string()),
+                source: Some("decider".to_string()),
+                port: Some(80),
+            }))
+            .await
+            .expect("entry should be recorded");
+
+        let latest = state
+            .latest_blocked_for_attempt("attempt-1")
+            .await
+            .expect("lookup should succeed")
+            .expect("attempt should have a blocked entry");
+        assert_eq!(latest.host, "three.example.com");
+    }
+
+    #[tokio::test]
+    async fn drain_blocked_returns_buffered_window() {
+        let state = network_proxy_state_for_policy(NetworkProxySettings::default());
+
+        for idx in 0..(MAX_BLOCKED_EVENTS + 5) {
+            state
+                .record_blocked(BlockedRequest::new(BlockedRequestArgs {
+                    host: format!("example{idx}.com"),
+                    reason: "not_allowed".to_string(),
+                    client: None,
+                    method: Some("GET".to_string()),
+                    mode: None,
+                    protocol: "http".to_string(),
+                    attempt_id: None,
+                    decision: Some("ask".to_string()),
+                    source: Some("decider".to_string()),
+                    port: Some(80),
+                }))
+                .await
+                .expect("entry should be recorded");
+        }
+
+        let blocked = state.drain_blocked().await.expect("drain should succeed");
+        assert_eq!(blocked.len(), MAX_BLOCKED_EVENTS);
+        assert_eq!(blocked[0].host, "example5.com");
+    }
+
+    #[test]
+    fn blocked_request_violation_log_line_serializes_payload() {
+        let entry = BlockedRequest {
+            host: "google.com".to_string(),
+            reason: "not_allowed".to_string(),
+            client: Some("127.0.0.1".to_string()),
+            method: Some("GET".to_string()),
+            mode: Some(NetworkMode::Full),
+            protocol: "http".to_string(),
+            attempt_id: Some("attempt-1".to_string()),
+            decision: Some("ask".to_string()),
+            source: Some("decider".to_string()),
+            port: Some(80),
+            timestamp: 1_735_689_600,
+        };
+
+        assert_eq!(
+            blocked_request_violation_log_line(&entry),
+            r#"CODEX_NETWORK_POLICY_VIOLATION {"host":"google.com","reason":"not_allowed","client":"127.0.0.1","method":"GET","mode":"full","protocol":"http","attempt_id":"attempt-1","decision":"ask","source":"decider","port":80,"timestamp":1735689600}"#
         );
     }
 
