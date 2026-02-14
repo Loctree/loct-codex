@@ -230,6 +230,9 @@
             "js_repl_tools_only": {
               "type": "boolean"
             },
+            "loctree_augment": {
+              "type": "boolean"
+            },
             "memory_tool": {
               "type": "boolean"
             },
@@ -1355,6 +1358,9 @@
           "type": "boolean"
         },
         "js_repl_tools_only": {
+          "type": "boolean"
+        },
+        "loctree_augment": {
           "type": "boolean"
         },
         "memory_tool": {
