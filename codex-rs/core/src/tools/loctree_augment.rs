@@ -15,12 +15,15 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::process::Stdio;
 
 const LOCTREE_ENV_FLAG: &str = "CODEX_LOCTREE_AUGMENT";
 const MAX_CONTEXT_BYTES: usize = 32 * 1024;
 const MIN_PATTERN_LEN: usize = 3;
 const FIND_LIMIT: usize = 50;
+const LOCTREE_FIND_HEADER: &str = "---- LOCTREE FIND ----";
+const LOCTREE_SLICE_HEADER: &str = "---- LOCTREE SLICE ----";
+const LOCTREE_IMPACT_HEADER: &str = "---- LOCTREE IMPACT ----";
+const LOCTREE_FOCUS_HEADER: &str = "---- LOCTREE FOCUS ----";
 
 struct Section {
     title: &'static str,
@@ -30,6 +33,21 @@ struct Section {
 struct SnapshotContext {
     root: PathBuf,
     snapshot: Snapshot,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LoctreeContextStats {
+    bytes: usize,
+    find: usize,
+    slice: usize,
+    impact: usize,
+    focus: usize,
+}
+
+impl LoctreeContextStats {
+    fn total_sections(self) -> usize {
+        self.find + self.slice + self.impact + self.focus
+    }
 }
 
 impl SnapshotContext {
@@ -147,43 +165,19 @@ fn get_git_head(project: &Path) -> Option<String> {
 }
 
 fn run_scan(project: &Path) -> bool {
-    if run_scan_with_cli(project) {
-        return true;
-    }
-
     run_scan_in_process(project)
 }
 
-fn run_scan_with_cli(project: &Path) -> bool {
-    let output = Command::new("loct")
-        .arg("scan")
-        .current_dir(project)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-
-    match output {
-        Ok(result) if result.status.success() => true,
-        Ok(result) => {
-            tracing::debug!(
-                project = %project.display(),
-                status = ?result.status,
-                "loct scan returned non-zero status"
-            );
-            false
-        }
-        Err(err) => {
-            tracing::debug!(
-                project = %project.display(),
-                error = %err,
-                "Failed to invoke loct scan"
-            );
-            false
-        }
-    }
-}
-
 fn run_scan_in_process(project: &Path) -> bool {
+    if let Err(err) = std::fs::create_dir_all(project.join(".loctree")) {
+        tracing::warn!(
+            project = %project.display(),
+            error = %err,
+            "Failed to create loctree directory before scan"
+        );
+        return false;
+    }
+
     let parsed = ParsedArgs {
         mode: Mode::Init,
         root_list: vec![project.to_path_buf()],
@@ -215,7 +209,15 @@ pub(crate) async fn loctree_context_for_grep(pattern: &str, search_path: &Path) 
     match tokio::task::spawn_blocking(move || loctree_context_for_grep_sync(&pattern, &search_path))
         .await
     {
-        Ok(context) => context,
+        Ok(context) => {
+            log_loctree_observability(
+                "grep_files",
+                Some(pattern_log.as_str()),
+                Some(search_path_log.as_path()),
+                context.as_deref(),
+            );
+            context
+        }
         Err(err) => {
             tracing::warn!(
                 pattern = %pattern_log,
@@ -236,7 +238,15 @@ pub(crate) async fn loctree_context_for_read(file_path: &Path) -> Option<String>
     let file_path = file_path.to_path_buf();
     let file_path_log = file_path.clone();
     match tokio::task::spawn_blocking(move || loctree_context_for_read_sync(&file_path)).await {
-        Ok(context) => context,
+        Ok(context) => {
+            log_loctree_observability(
+                "read_file",
+                None,
+                Some(file_path_log.as_path()),
+                context.as_deref(),
+            );
+            context
+        }
         Err(err) => {
             tracing::warn!(
                 path = %file_path_log.display(),
@@ -257,8 +267,17 @@ pub(crate) async fn loctree_context_for_exec(cwd: &Path, command: &[String]) -> 
     let command = command.to_vec();
     let cwd_log = cwd.clone();
     let command_log = command.clone();
+    let command_joined = command_log.join(" ");
     match tokio::task::spawn_blocking(move || loctree_context_for_exec_sync(&cwd, &command)).await {
-        Ok(context) => context,
+        Ok(context) => {
+            log_loctree_observability(
+                "exec_command",
+                Some(command_joined.as_str()),
+                Some(cwd_log.as_path()),
+                context.as_deref(),
+            );
+            context
+        }
         Err(err) => {
             tracing::warn!(
                 cwd = %cwd_log.display(),
@@ -352,14 +371,26 @@ fn loctree_context_for_exec_sync(cwd: &Path, command: &[String]) -> Option<Strin
                 } else {
                     cwd.join(&path)
                 };
-                let ctx = SnapshotContext::load(&resolved)?;
-                sections.extend(loctree_sections_for_file(&ctx, &resolved));
+                if let Some(ctx) = SnapshotContext::load(&resolved) {
+                    sections.extend(loctree_sections_for_file(&ctx, &resolved));
+                } else {
+                    tracing::debug!(
+                        path = %resolved.display(),
+                        "Skipping loctree read context because snapshot is unavailable"
+                    );
+                }
             }
             ParsedCommand::Search { query, path, .. } => {
                 let Some(query) = query.as_deref().and_then(normalize_pattern) else {
                     continue;
                 };
-                let ctx = SnapshotContext::load(cwd)?;
+                let Some(ctx) = SnapshotContext::load(cwd) else {
+                    tracing::debug!(
+                        cwd = %cwd.display(),
+                        "Skipping loctree search context because snapshot is unavailable"
+                    );
+                    continue;
+                };
 
                 if let Some(result) = loctree_find(&ctx, &query, FIND_LIMIT) {
                     sections.push(Section {
@@ -396,6 +427,80 @@ fn env_flag_enabled() -> bool {
             !matches!(value.as_str(), "0" | "false" | "off" | "no")
         }
         Err(_) => true,
+    }
+}
+
+fn loctree_context_stats(context: Option<&str>) -> Option<LoctreeContextStats> {
+    let context = context.map(str::trim_end)?;
+    if context.is_empty() {
+        return None;
+    }
+
+    let find = context.match_indices(LOCTREE_FIND_HEADER).count();
+    let slice = context.match_indices(LOCTREE_SLICE_HEADER).count();
+    let impact = context.match_indices(LOCTREE_IMPACT_HEADER).count();
+    let focus = context.match_indices(LOCTREE_FOCUS_HEADER).count();
+
+    Some(LoctreeContextStats {
+        bytes: context.len(),
+        find,
+        slice,
+        impact,
+        focus,
+    })
+}
+
+fn log_loctree_observability(
+    operation: &str,
+    subject: Option<&str>,
+    path: Option<&Path>,
+    context: Option<&str>,
+) {
+    match loctree_context_stats(context) {
+        Some(stats) => {
+            if let Some(path) = path {
+                tracing::info!(
+                    operation,
+                    subject = subject.unwrap_or(""),
+                    path = %path.display(),
+                    bytes = stats.bytes,
+                    sections = stats.total_sections(),
+                    find = stats.find,
+                    slice = stats.slice,
+                    impact = stats.impact,
+                    focus = stats.focus,
+                    "Loctree augmentation applied"
+                );
+            } else {
+                tracing::info!(
+                    operation,
+                    subject = subject.unwrap_or(""),
+                    bytes = stats.bytes,
+                    sections = stats.total_sections(),
+                    find = stats.find,
+                    slice = stats.slice,
+                    impact = stats.impact,
+                    focus = stats.focus,
+                    "Loctree augmentation applied"
+                );
+            }
+        }
+        None => {
+            if let Some(path) = path {
+                tracing::info!(
+                    operation,
+                    subject = subject.unwrap_or(""),
+                    path = %path.display(),
+                    "Loctree augmentation skipped (no context)"
+                );
+            } else {
+                tracing::info!(
+                    operation,
+                    subject = subject.unwrap_or(""),
+                    "Loctree augmentation skipped (no context)"
+                );
+            }
+        }
     }
 }
 
@@ -826,11 +931,43 @@ fn resolve_file_in_snapshot(ctx: &SnapshotContext, file_path: &Path) -> Option<S
         return None;
     }
 
-    ctx.snapshot
+    if let Some(file) = ctx
+        .snapshot
         .files
         .iter()
-        .find(|file| file.path.ends_with(&candidate))
-        .map(|file| file.path.clone())
+        .find(|file| file.path == candidate)
+    {
+        return Some(file.path.clone());
+    }
+
+    let mut suffix_matches: Vec<_> = ctx
+        .snapshot
+        .files
+        .iter()
+        .filter(|file| file.path.ends_with(&candidate))
+        .collect();
+
+    if suffix_matches.is_empty() {
+        return None;
+    }
+
+    suffix_matches.sort_by(|a, b| {
+        a.path
+            .len()
+            .cmp(&b.path.len())
+            .then_with(|| a.path.cmp(&b.path))
+    });
+
+    if suffix_matches.len() > 1 {
+        tracing::debug!(
+            candidate,
+            selected = %suffix_matches[0].path,
+            matches = suffix_matches.len(),
+            "Ambiguous loctree suffix match; selecting shortest lexical path"
+        );
+    }
+
+    Some(suffix_matches[0].path.clone())
 }
 
 fn directory_in_project(project_root: &Path, dir_path: &Path) -> Option<String> {
@@ -961,5 +1098,25 @@ mod tests {
         let exec_context = loctree_context_for_exec_sync(&root, &command).expect("exec context");
         assert!(exec_context.contains("LOCTREE SLICE"));
         assert!(exec_context.contains("LOCTREE IMPACT"));
+    }
+
+    #[test]
+    fn loctree_context_stats_counts_sections() {
+        let context = format!(
+            "{LOCTREE_FIND_HEADER}\n{{}}\n{LOCTREE_SLICE_HEADER}\n{{}}\n{LOCTREE_IMPACT_HEADER}\n{{}}\n{LOCTREE_FOCUS_HEADER}\n{{}}"
+        );
+        let stats = loctree_context_stats(Some(&context)).expect("stats");
+        assert_eq!(stats.bytes, context.len());
+        assert_eq!(stats.find, 1);
+        assert_eq!(stats.slice, 1);
+        assert_eq!(stats.impact, 1);
+        assert_eq!(stats.focus, 1);
+        assert_eq!(stats.total_sections(), 4);
+    }
+
+    #[test]
+    fn loctree_context_stats_ignores_empty_input() {
+        assert!(loctree_context_stats(None).is_none());
+        assert!(loctree_context_stats(Some(" \n\t")).is_none());
     }
 }
