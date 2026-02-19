@@ -69,10 +69,9 @@ struct StageOneOutput {
     /// Compact summary line used for routing and indexing.
     #[serde(rename = "rollout_summary")]
     pub(crate) rollout_summary: String,
-    /// Optional slug accepted from stage-1 output for forward compatibility.
-    /// This is currently ignored by downstream storage and naming, which remain thread-id based.
+    /// Optional slug used to derive rollout summary artifact filenames.
     #[serde(default, rename = "rollout_slug")]
-    pub(crate) _rollout_slug: Option<String>,
+    pub(crate) rollout_slug: Option<String>,
 }
 
 /// Runs memory phase 1 in strict step order:
@@ -81,6 +80,12 @@ struct StageOneOutput {
 /// 3) run stage-1 extraction jobs in parallel
 /// 4) emit metrics and logs
 pub(in crate::memories) async fn run(session: &Arc<Session>, config: &Config) {
+    let _phase_one_e2e_timer = session
+        .services
+        .otel_manager
+        .start_timer(metrics::MEMORY_PHASE_ONE_E2E_MS, &[])
+        .ok();
+
     // 1. Claim startup job.
     let Some(claimed_candidates) = claim_startup_jobs(session, &config.memories).await else {
         return;
@@ -119,7 +124,7 @@ pub fn output_schema() -> Value {
         "type": "object",
         "properties": {
             "rollout_summary": { "type": "string" },
-            "rollout_slug": { "type": "string" },
+            "rollout_slug": { "type": ["string", "null"] },
             "raw_memory": { "type": "string" }
         },
         "required": ["rollout_summary", "rollout_slug", "raw_memory"],
@@ -199,7 +204,7 @@ async fn build_request_context(session: &Arc<Session>, config: &Config) -> Reque
     let turn_context = session.new_default_turn().await;
     RequestContext::from_turn_context(
         turn_context.as_ref(),
-        turn_context.resolve_turn_metadata_header().await,
+        turn_context.turn_metadata_state.current_header_value(),
         model,
     )
 }
@@ -268,6 +273,7 @@ mod job {
                 thread.updated_at.timestamp(),
                 &stage_one_output.raw_memory,
                 &stage_one_output.rollout_summary,
+                stage_one_output.rollout_slug.as_deref(),
             )
             .await,
             token_usage,
@@ -348,6 +354,7 @@ mod job {
         let mut output: StageOneOutput = serde_json::from_str(&result)?;
         output.raw_memory = redact_secrets(output.raw_memory);
         output.rollout_summary = redact_secrets(output.rollout_summary);
+        output.rollout_slug = output.rollout_slug.map(redact_secrets);
 
         Ok((output, token_usage))
     }
@@ -401,6 +408,7 @@ mod job {
             source_updated_at: i64,
             raw_memory: &str,
             rollout_summary: &str,
+            rollout_slug: Option<&str>,
         ) -> JobOutcome {
             let Some(state_db) = session.services.state_db.as_deref() else {
                 return JobOutcome::Failed;
@@ -413,6 +421,7 @@ mod job {
                     source_updated_at,
                     raw_memory,
                     rollout_summary,
+                    rollout_slug,
                 )
                 .await
                 .unwrap_or(false)

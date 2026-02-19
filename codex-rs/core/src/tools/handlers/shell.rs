@@ -55,6 +55,7 @@ impl ShellHandler {
             expiration: params.timeout_ms.into(),
             env: create_env(&turn_context.shell_environment_policy, Some(thread_id)),
             network: turn_context.network.clone(),
+            network_attempt_id: None,
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
             windows_sandbox_level: turn_context.windows_sandbox_level,
             justification: params.justification.clone(),
@@ -84,6 +85,7 @@ impl ShellCommandHandler {
             expiration: params.timeout_ms.into(),
             env: create_env(&turn_context.shell_environment_policy, Some(thread_id)),
             network: turn_context.network.clone(),
+            network_attempt_id: None,
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
             windows_sandbox_level: turn_context.windows_sandbox_level,
             justification: params.justification.clone(),
@@ -242,18 +244,17 @@ impl ShellHandler {
             freeform,
         } = args;
 
-        let features = session.features();
-        let request_rule_enabled = features.enabled(crate::features::Feature::RequestRule);
-        let prefix_rule = if request_rule_enabled {
-            prefix_rule
-        } else {
-            None
-        };
-
         let mut exec_params = exec_params;
         let dependency_env = session.dependency_env().await;
         if !dependency_env.is_empty() {
-            exec_params.env.extend(dependency_env);
+            exec_params.env.extend(dependency_env.clone());
+        }
+
+        let mut explicit_env_overrides = turn.shell_environment_policy.r#set.clone();
+        for key in dependency_env.keys() {
+            if let Some(value) = exec_params.env.get(key) {
+                explicit_env_overrides.insert(key.clone(), value.clone());
+            }
         }
 
         // Approval policy guard for explicit escalation in non-OnRequest modes.
@@ -314,6 +315,7 @@ impl ShellHandler {
             cwd: exec_params.cwd.clone(),
             timeout_ms: exec_params.expiration.timeout_ms(),
             env: exec_params.env.clone(),
+            explicit_env_overrides,
             network: exec_params.network.clone(),
             sandbox_permissions: exec_params.sandbox_permissions,
             justification: exec_params.justification.clone(),
@@ -326,10 +328,12 @@ impl ShellHandler {
             turn: turn.as_ref(),
             call_id: call_id.clone(),
             tool_name,
+            network_attempt_id: None,
         };
         let out = orchestrator
             .run(&mut runtime, &req, &tool_ctx, &turn, turn.approval_policy)
-            .await;
+            .await
+            .map(|result| result.output);
         let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, None);
         let content_result = emitter.finish(event_ctx, out).await;
         let (content, was_error) = match content_result {
@@ -338,7 +342,10 @@ impl ShellHandler {
             Err(err) => return Err(err),
         };
 
-        let loctree_context = if features.enabled(crate::features::Feature::LoctreeAugment) {
+        let loctree_context = if session
+            .features()
+            .enabled(crate::features::Feature::LoctreeAugment)
+        {
             loctree_augment::loctree_context_for_exec(&exec_params.cwd, &exec_params.command).await
         } else {
             None

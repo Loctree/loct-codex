@@ -3,6 +3,7 @@ pub mod events;
 pub(crate) mod handlers;
 pub mod js_repl;
 pub(crate) mod loctree_augment;
+pub(crate) mod network_approval;
 pub mod orchestrator;
 pub mod parallel;
 pub mod registry;
