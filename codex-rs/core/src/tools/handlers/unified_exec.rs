@@ -10,6 +10,7 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::apply_patch::intercept_apply_patch;
 use crate::tools::handlers::parse_arguments;
+use crate::tools::loctree_augment;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use crate::unified_exec::ExecCommandRequest;
@@ -128,6 +129,7 @@ impl ToolHandler for UnifiedExecHandler {
         let manager: &UnifiedExecProcessManager = &session.services.unified_exec_manager;
         let context = UnifiedExecContext::new(session.clone(), turn.clone(), call_id.clone());
 
+        let mut loctree_hint: Option<(PathBuf, Vec<String>)> = None;
         let response = match tool_name.as_str() {
             "exec_command" => {
                 let args: ExecCommandArgs = parse_arguments(&arguments)?;
@@ -167,6 +169,7 @@ impl ToolHandler for UnifiedExecHandler {
 
                 let workdir = workdir.map(|dir| context.turn.resolve_path(Some(dir)));
                 let cwd = workdir.clone().unwrap_or_else(|| context.turn.cwd.clone());
+                loctree_hint = Some((cwd.clone(), command.clone()));
 
                 if let Some(output) = intercept_apply_patch(
                     &command,
@@ -237,7 +240,15 @@ impl ToolHandler for UnifiedExecHandler {
             }
         };
 
-        let content = format_response(&response);
+        let mut content = format_response(&response);
+        if session
+            .features()
+            .enabled(crate::features::Feature::LoctreeAugment)
+            && let Some((cwd, command)) = loctree_hint
+        {
+            let loctree_context = loctree_augment::loctree_context_for_exec(&cwd, &command).await;
+            content = loctree_augment::append_loctree_context(content, loctree_context);
+        }
 
         Ok(ToolOutput::Function {
             body: FunctionCallOutputBody::Text(content),

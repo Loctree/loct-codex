@@ -11,6 +11,7 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
+use crate::tools::loctree_augment;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
@@ -99,7 +100,9 @@ impl ToolHandler for ReadFileHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
-        let ToolInvocation { payload, .. } = invocation;
+        let ToolInvocation {
+            payload, session, ..
+        } = invocation;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
@@ -146,8 +149,18 @@ impl ToolHandler for ReadFileHandler {
                 indentation::read_block(&path, offset, limit, indentation).await?
             }
         };
+        let loctree_context = if session
+            .features()
+            .enabled(crate::features::Feature::LoctreeAugment)
+        {
+            loctree_augment::loctree_context_for_read(&path).await
+        } else {
+            None
+        };
+        let content =
+            loctree_augment::append_loctree_context(collected.join("\n"), loctree_context);
         Ok(ToolOutput::Function {
-            body: FunctionCallOutputBody::Text(collected.join("\n")),
+            body: FunctionCallOutputBody::Text(content),
             success: Some(true),
         })
     }

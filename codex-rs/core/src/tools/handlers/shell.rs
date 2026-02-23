@@ -20,6 +20,7 @@ use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::handlers::apply_patch::intercept_apply_patch;
 use crate::tools::handlers::parse_arguments;
+use crate::tools::loctree_augment;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
@@ -359,7 +360,31 @@ impl ShellHandler {
             .await
             .map(|result| result.output);
         let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, None);
-        let content = emitter.finish(event_ctx, out).await?;
+        let content_result = emitter.finish(event_ctx, out).await;
+        let (content, was_error) = match content_result {
+            Ok(content) => (content, false),
+            Err(FunctionCallError::RespondToModel(content)) => (content, true),
+            Err(err) => return Err(err),
+        };
+
+        let loctree_context = if session
+            .features()
+            .enabled(crate::features::Feature::LoctreeAugment)
+        {
+            loctree_augment::loctree_context_for_exec(&exec_params.cwd, &exec_params.command).await
+        } else {
+            None
+        };
+        let content = if freeform {
+            loctree_augment::append_loctree_context(content, loctree_context)
+        } else {
+            loctree_augment::inject_loctree_context_json(content, loctree_context)
+        };
+
+        if was_error {
+            return Err(FunctionCallError::RespondToModel(content));
+        }
+
         Ok(ToolOutput::Function {
             body: FunctionCallOutputBody::Text(content),
             success: Some(true),

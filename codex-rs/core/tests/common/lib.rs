@@ -11,6 +11,7 @@ use codex_core::config::ConfigOverrides;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use regex_lite::Regex;
 use std::path::PathBuf;
+use std::sync::Once;
 
 pub mod apps_test_server;
 pub mod context_snapshot;
@@ -21,9 +22,60 @@ pub mod test_codex;
 pub mod test_codex_exec;
 
 #[ctor]
-fn enable_deterministic_unified_exec_process_ids_for_tests() {
+fn initialize_test_process() {
     codex_core::test_support::set_thread_manager_test_mode(true);
     codex_core::test_support::set_deterministic_process_ids(true);
+    bump_nofile_limit_for_tests();
+}
+
+/// CI/dev environments sometimes run with a low default `ulimit -n` (e.g. 256).
+/// Our integration suite can spin up many mock servers and watchers in parallel,
+/// which makes the default soft limit too small and triggers EMFILE flakiness.
+///
+/// Bump the soft `RLIMIT_NOFILE` once per test process so tests are self-contained
+/// and do not require manual shell setup.
+pub fn bump_nofile_limit_for_tests() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        #[cfg(unix)]
+        {
+            // Cap to keep things reasonable even if the hard limit is huge.
+            const TARGET_SOFT_LIMIT: libc::rlim_t = 8_192;
+
+            // SAFETY: libc FFI.
+            unsafe {
+                let mut current = libc::rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                };
+                if libc::getrlimit(libc::RLIMIT_NOFILE, &mut current) != 0 {
+                    eprintln!(
+                        "WARN: getrlimit(RLIMIT_NOFILE) failed: {}",
+                        std::io::Error::last_os_error()
+                    );
+                    return;
+                }
+
+                let desired = std::cmp::min(current.rlim_max, TARGET_SOFT_LIMIT);
+                if current.rlim_cur >= desired {
+                    return;
+                }
+
+                let updated = libc::rlimit {
+                    rlim_cur: desired,
+                    rlim_max: current.rlim_max,
+                };
+                if libc::setrlimit(libc::RLIMIT_NOFILE, &updated) != 0 {
+                    eprintln!(
+                        "WARN: setrlimit(RLIMIT_NOFILE) failed (cur={}, max={}): {}",
+                        current.rlim_cur,
+                        current.rlim_max,
+                        std::io::Error::last_os_error()
+                    );
+                }
+            }
+        }
+    });
 }
 
 #[ctor]
@@ -103,6 +155,7 @@ pub fn test_tmp_path_buf() -> PathBuf {
 /// temporary directory. Using a per-test directory keeps tests hermetic and
 /// avoids clobbering a developer’s real `~/.codex`.
 pub async fn load_default_config_for_test(codex_home: &TempDir) -> Config {
+    bump_nofile_limit_for_tests();
     ConfigBuilder::default()
         .codex_home(codex_home.path().to_path_buf())
         .harness_overrides(default_test_overrides())

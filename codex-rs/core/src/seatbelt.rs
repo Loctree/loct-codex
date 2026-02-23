@@ -532,12 +532,36 @@ mod tests {
 
     fn assert_seatbelt_denied(stderr: &[u8], path: &Path) {
         let stderr = String::from_utf8_lossy(stderr);
-        let expected = format!("bash: {}: Operation not permitted\n", path.display());
+        let stderr = stderr.trim_end();
+        let (expected, expected_line) = expected_seatbelt_denied_messages(path);
+        let (alt, alt_line) =
+            expected_seatbelt_denied_messages(&PathBuf::from(alt_seatbelt_path(path)));
         assert!(
             stderr == expected
+                || stderr == expected_line
+                || stderr == alt
+                || stderr == alt_line
                 || stderr.contains("sandbox-exec: sandbox_apply: Operation not permitted"),
             "unexpected stderr: {stderr}"
         );
+    }
+
+    fn expected_seatbelt_denied_messages(path: &Path) -> (String, String) {
+        let path_display = path.display().to_string();
+        let expected = format!("bash: {path_display}: Operation not permitted");
+        let expected_line = format!("bash: line 1: {path_display}: Operation not permitted");
+        (expected, expected_line)
+    }
+
+    fn alt_seatbelt_path(path: &Path) -> String {
+        let display = path.display().to_string();
+        if let Some(stripped) = display.strip_prefix("/private") {
+            return stripped.to_string();
+        }
+        if display.starts_with("/var/") {
+            return format!("/private{display}");
+        }
+        display
     }
 
     fn absolute_path(path: &str) -> AbsolutePathBuf {

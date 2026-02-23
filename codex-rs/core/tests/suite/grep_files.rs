@@ -63,13 +63,14 @@ async fn grep_files_tool_collects_matches() -> Result<()> {
         .function_call_output_content_and_success(call_id)
         .expect("tool output present");
     let content = content_opt.expect("content present");
+    let content = strip_loctree_context(&content);
     let success = success_opt.unwrap_or(true);
     assert!(
         success,
         "expected success for matches, got content={content}"
     );
 
-    let entries = collect_file_names(&content);
+    let entries = collect_file_names(content);
     assert_eq!(entries.len(), 2, "content: {content}");
     assert!(
         entries.contains("alpha.rs"),
@@ -116,6 +117,7 @@ async fn grep_files_tool_reports_empty_results() -> Result<()> {
         .function_call_output_content_and_success(call_id)
         .expect("tool output present");
     let content = content_opt.expect("content present");
+    let content = strip_loctree_context(&content);
     if let Some(success) = success_opt {
         assert!(!success, "expected success=false content={content}");
     }
@@ -142,4 +144,11 @@ fn collect_file_names(content: &str) -> HashSet<String> {
                 .map(|name| name.to_string_lossy().into_owned())
         })
         .collect()
+}
+
+fn strip_loctree_context(content: &str) -> &str {
+    content
+        .split_once("\n---- LOCTREE ")
+        .map(|(prefix, _)| prefix.trim_end())
+        .unwrap_or(content)
 }

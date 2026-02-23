@@ -15,6 +15,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub type SharedTurnDiffTracker = Arc<Mutex<TurnDiffTracker>>;
+const LOCTREE_FIND_HEADER: &str = "---- LOCTREE FIND ----";
+const LOCTREE_SLICE_HEADER: &str = "---- LOCTREE SLICE ----";
+const LOCTREE_IMPACT_HEADER: &str = "---- LOCTREE IMPACT ----";
+const LOCTREE_FOCUS_HEADER: &str = "---- LOCTREE FOCUS ----";
 
 #[derive(Clone)]
 pub struct ToolInvocation {
@@ -118,6 +122,18 @@ impl ToolOutput {
 }
 
 fn telemetry_preview(content: &str) -> String {
+    let find = content.match_indices(LOCTREE_FIND_HEADER).count();
+    let slice = content.match_indices(LOCTREE_SLICE_HEADER).count();
+    let impact = content.match_indices(LOCTREE_IMPACT_HEADER).count();
+    let focus = content.match_indices(LOCTREE_FOCUS_HEADER).count();
+    let loctree_summary = if find + slice + impact + focus == 0 {
+        None
+    } else {
+        let bytes = content.len();
+        Some(format!(
+            "[loctree augment] sections: find={find}, slice={slice}, impact={impact}, focus={focus}, bytes={bytes}"
+        ))
+    };
     let truncated_slice = take_bytes_at_char_boundary(content, TELEMETRY_PREVIEW_MAX_BYTES);
     let truncated_by_bytes = truncated_slice.len() < content.len();
 
@@ -137,22 +153,29 @@ fn telemetry_preview(content: &str) -> String {
     let truncated_by_lines = lines_iter.next().is_some();
 
     if !truncated_by_bytes && !truncated_by_lines {
-        return content.to_string();
+        preview = content.to_string();
+    } else {
+        if preview.len() < truncated_slice.len()
+            && truncated_slice
+                .as_bytes()
+                .get(preview.len())
+                .is_some_and(|byte| *byte == b'\n')
+        {
+            preview.push('\n');
+        }
+
+        if !preview.is_empty() && !preview.ends_with('\n') {
+            preview.push('\n');
+        }
+        preview.push_str(TELEMETRY_PREVIEW_TRUNCATION_NOTICE);
     }
 
-    if preview.len() < truncated_slice.len()
-        && truncated_slice
-            .as_bytes()
-            .get(preview.len())
-            .is_some_and(|byte| *byte == b'\n')
-    {
-        preview.push('\n');
+    if let Some(loctree_summary) = loctree_summary {
+        if !preview.is_empty() && !preview.ends_with('\n') {
+            preview.push('\n');
+        }
+        preview.push_str(&loctree_summary);
     }
-
-    if !preview.is_empty() && !preview.ends_with('\n') {
-        preview.push('\n');
-    }
-    preview.push_str(TELEMETRY_PREVIEW_TRUNCATION_NOTICE);
 
     preview
 }
@@ -279,5 +302,27 @@ mod tests {
 
         assert!(lines.len() <= TELEMETRY_PREVIEW_MAX_LINES + 1);
         assert_eq!(lines.last(), Some(&TELEMETRY_PREVIEW_TRUNCATION_NOTICE));
+    }
+
+    #[test]
+    fn telemetry_preview_adds_loctree_summary_when_augmented_content_exists() {
+        let content = format!(
+            "L1: use crate::foo;\n{LOCTREE_FIND_HEADER}\n{{}}\n{LOCTREE_SLICE_HEADER}\n{{}}\n{LOCTREE_IMPACT_HEADER}\n{{}}"
+        );
+        let preview = telemetry_preview(&content);
+
+        assert!(preview.contains("[loctree augment] sections: find=1, slice=1, impact=1, focus=0"));
+    }
+
+    #[test]
+    fn telemetry_preview_keeps_loctree_summary_when_truncated() {
+        let content = format!(
+            "{}\n{LOCTREE_FOCUS_HEADER}\n{{}}",
+            "x".repeat(TELEMETRY_PREVIEW_MAX_BYTES + 128)
+        );
+        let preview = telemetry_preview(&content);
+
+        assert!(preview.contains(TELEMETRY_PREVIEW_TRUNCATION_NOTICE));
+        assert!(preview.contains("[loctree augment] sections: find=0, slice=0, impact=0, focus=1"));
     }
 }

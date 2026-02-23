@@ -143,6 +143,8 @@ pub enum Feature {
     ResponsesWebsockets,
     /// Enable Responses API websocket v2 mode.
     ResponsesWebsocketsV2,
+    /// Augment tool outputs with loctree analysis (find/slice/impact/focus).
+    LoctreeAugment,
 }
 
 impl Feature {
@@ -478,11 +480,21 @@ pub const FEATURES: &[FeatureSpec] = &[
         stage: Stage::Removed,
         default_enabled: false,
     },
-    // Experimental program. Rendered in the `/experimental` menu for users.
     FeatureSpec {
         id: Feature::CodexGitCommit,
         key: "codex_git_commit",
         stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    // Experimental program. Rendered in the `/experimental` menu for users.
+    FeatureSpec {
+        id: Feature::LoctreeAugment,
+        key: "loctree_augment",
+        stage: Stage::Experimental {
+            name: "Loctree augmentation",
+            menu_description: "Augment tool outputs with extra loctree context (find/slice/impact/focus).",
+            announcement: "NEW: Loctree augmentation can enrich tool outputs with codebase context. Enable in /experimental if you want it!",
+        },
         default_enabled: false,
     },
     FeatureSpec {

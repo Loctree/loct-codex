@@ -125,6 +125,22 @@ pub use rollout::find_thread_path_by_name_str;
 pub use rollout::list::Cursor;
 pub use rollout::list::ThreadItem;
 pub use rollout::list::ThreadSortKey;
+
+// Some CI/dev environments run with a low default `ulimit -n` (e.g. 256).
+// A subset of our unit tests spin up multiple Tokio runtimes and spawn many processes,
+// which can exceed the soft RLIMIT_NOFILE and cause EMFILE flakiness.
+//
+// We bump the soft limit once per test process so tests are self-contained and do not
+// require manual shell setup.
+#[cfg(test)]
+mod test_hardening {
+    use ctor::ctor;
+
+    #[ctor]
+    fn bump_nofile_limit_for_tests() {
+        core_test_support::bump_nofile_limit_for_tests();
+    }
+}
 pub use rollout::list::ThreadsPage;
 pub use rollout::list::parse_cursor;
 pub use rollout::list::read_head_for_summary;
